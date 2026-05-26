@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { fetchTechList } from "@/lib/api";
-import TechCard from "@/components/TechCard";
+import { fetchTechGrouped } from "@/lib/api";
+import TechGroupCard from "@/components/TechGroupCard";
 import CategoryNav from "@/components/CategoryNav";
 import Pagination from "@/components/Pagination";
 import type { Category } from "@/lib/types";
@@ -53,7 +53,7 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
 
   let result;
   try {
-    result = await fetchTechList({ category, size: 20, page });
+    result = await fetchTechGrouped({ category, size: 20, page });
   } catch {
     result = null;
   }
@@ -90,7 +90,7 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
         </div>
         {result && (
           <p className="mt-4 text-xs text-slate-400 dark:text-slate-500">
-            총 {result.total}개의 기술
+            총 {result.total}개 그룹 (패치 버전 그룹화 포함)
           </p>
         )}
       </div>
@@ -106,8 +106,8 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
         </p>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {result.items.map((item) => (
-            <TechCard key={item.id} item={item} />
+          {result.items.map((group) => (
+            <TechGroupCard key={group.group_key} group={group} />
           ))}
         </div>
       )}

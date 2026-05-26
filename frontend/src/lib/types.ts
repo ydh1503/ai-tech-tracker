@@ -77,6 +77,32 @@ export interface CategoryMeta {
   examples: string[];
 }
 
+export interface PatchVersionChip {
+  id: string;
+  title: string;
+  version_str: string;
+  updated_at: string;
+}
+
+export interface PatchVersionSummary {
+  id: string;
+  title: string;
+  version_str: string;
+  summary: string | null;
+  description: string | null;
+  updated_at: string;
+  created_at: string;
+}
+
+export interface TechGroupedItem {
+  group_key: string;
+  base_title: string;
+  version_prefix: string;
+  patch_count: number;
+  latest: TechItem;
+  patches: PatchVersionChip[];
+}
+
 export const CATEGORY_META: Record<Category, CategoryMeta> = {
   skills: {
     label: "스킬",

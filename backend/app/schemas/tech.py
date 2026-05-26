@@ -188,3 +188,36 @@ class TimelineItem(BaseModel):
     tech_released_at: datetime | None
     updated_at: datetime
     created_at: datetime
+
+
+# ─── 패치 버전 그룹화 ──────────────────────────────────────────────────────────
+
+class PatchVersionChip(BaseModel):
+    """목록 카드용 패치 버전 최소 정보."""
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    title: str
+    version_str: str   # e.g. "2.1.149"
+    updated_at: datetime
+
+
+class PatchVersionSummary(BaseModel):
+    """상세 페이지용 패치 버전 전체 정보."""
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    title: str
+    version_str: str
+    summary: str | None
+    description: str | None
+    updated_at: datetime
+    created_at: datetime
+
+
+class TechGroupedItem(BaseModel):
+    """패치 버전이 묶인 그룹 아이템."""
+    group_key: str           # e.g. "anthropics/claude-code@2.1"  or  "__single__{uuid}"
+    base_title: str          # e.g. "anthropics/claude-code"
+    version_prefix: str      # e.g. "v2.1"  (단일 아이템이면 "")
+    patch_count: int
+    latest: TechItemList     # 최신 패치의 요약 정보
+    patches: list[PatchVersionChip]  # 모든 패치 목록 (desc)

@@ -1,6 +1,6 @@
 import { Suspense } from "react";
-import { fetchTechList } from "@/lib/api";
-import TechCard from "@/components/TechCard";
+import { fetchTechGrouped } from "@/lib/api";
+import TechGroupCard from "@/components/TechGroupCard";
 import CategoryNav from "@/components/CategoryNav";
 import Pagination from "@/components/Pagination";
 import type { Metadata } from "next";
@@ -21,11 +21,11 @@ async function LatestTechList({ page = 1 }: { page?: number }) {
     today.setUTCHours(0, 0, 0, 0);
     const createdAfter = today.toISOString();
 
-    result = await fetchTechList({ size: 20, page: 1, created_after: createdAfter });
+    result = await fetchTechGrouped({ size: 20, page: 1, created_after: createdAfter });
 
     if (result.items.length === 0) {
       isToday = false;
-      result = await fetchTechList({ size: 20, page });
+      result = await fetchTechGrouped({ size: 20, page });
     }
   } catch {
     return (
@@ -72,14 +72,14 @@ async function LatestTechList({ page = 1 }: { page?: number }) {
 
       {/* Featured 카드 (첫 번째 항목) */}
       <div className="mb-4">
-        <TechCard item={featured} featured />
+        <TechGroupCard group={featured} featured />
       </div>
 
       {/* 나머지 카드 그리드 */}
       {rest.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {rest.map((item) => (
-            <TechCard key={item.id} item={item} />
+          {rest.map((group) => (
+            <TechGroupCard key={group.group_key} group={group} />
           ))}
         </div>
       )}

@@ -1,10 +1,11 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { fetchTechById, fetchTechList } from "@/lib/api";
+import { fetchTechById, fetchTechList, fetchTechSiblings } from "@/lib/api";
 import StatusBadge from "@/components/StatusBadge";
 import DeprecatedBanner from "@/components/DeprecatedBanner";
+import PatchVersionViewer from "@/components/PatchVersionViewer";
 import type { Metadata } from "next";
-import { CATEGORY_LABELS, type TechItem } from "@/lib/types";
+import { CATEGORY_LABELS, type TechItem, type PatchVersionSummary } from "@/lib/types";
 
 export const revalidate = 60;
 
@@ -51,6 +52,14 @@ export default async function TechDetailPage({ params }: TechDetailPageProps) {
     // 관련 항목 없이 렌더링
   }
 
+  // siblings (패치 버전 그룹)
+  let siblings: PatchVersionSummary[] = [];
+  try {
+    siblings = await fetchTechSiblings(id);
+  } catch {
+    // siblings 없이 렌더링
+  }
+
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-8">
       {/* 뒤로가기 */}
@@ -78,6 +87,11 @@ export default async function TechDetailPage({ params }: TechDetailPageProps) {
           deprecatedById={item.deprecated_by}
           deprecatedReason={item.deprecated_reason}
         />
+      )}
+
+      {/* 패치 버전 히스토리 */}
+      {siblings.length > 1 && (
+        <PatchVersionViewer siblings={siblings} currentId={id} />
       )}
 
       {/* 기사 헤더 */}

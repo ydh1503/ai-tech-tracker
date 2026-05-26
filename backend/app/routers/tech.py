@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from typing import Annotated
 from xml.etree.ElementTree import Element, SubElement, tostring
@@ -19,6 +21,9 @@ from app.models.tech import TechCategory, TechItem, TechStatus
 from app.schemas.tech import (
     CategoryCount,
     PaginatedResponse,
+    PatchVersionChip,
+    PatchVersionSummary,
+    TechGroupedItem,
     TechItemList,
     TechItemResponse,
     TimelineItem,
@@ -27,6 +32,32 @@ from app.schemas.tech import (
 router = APIRouter(tags=["Tech Items"])
 
 DbDep = Annotated[AsyncSession, Depends(get_db)]
+
+
+# ─── 버전 추출 유틸 ────────────────────────────────────────────────────────────
+
+_VERSION_RE = re.compile(r'^(.*?)\s+v?(\d+)\.(\d+)\.(\d+)\b', re.IGNORECASE)
+
+
+def _extract_version(title: str) -> tuple[str, int, int, int] | None:
+    """(base_name, major, minor, patch) 반환, 없으면 None."""
+    m = _VERSION_RE.match(title.strip())
+    if m:
+        return m.group(1).strip(), int(m.group(2)), int(m.group(3)), int(m.group(4))
+    return None
+
+
+def _group_key(title: str) -> str | None:
+    info = _extract_version(title)
+    if info:
+        base, major, minor, _ = info
+        return f"{base}@{major}.{minor}"
+    return None
+
+
+def _version_str(title: str) -> str:
+    info = _extract_version(title)
+    return f"{info[1]}.{info[2]}.{info[3]}" if info else ""
 
 
 # ─── GET /api/tech ─────────────────────────────────────────────────────────────
@@ -143,6 +174,83 @@ async def search_tech_items(
     )
 
 
+# ─── GET /api/tech/grouped ─────────────────────────────────────────────────────
+
+@router.get("/tech/grouped", response_model=PaginatedResponse[TechGroupedItem])
+async def list_grouped_tech_items(
+    db: DbDep,
+    category: TechCategory | None = Query(None),
+    created_after: datetime | None = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+) -> PaginatedResponse[TechGroupedItem]:
+    """패치 버전을 그룹화한 기술 목록을 반환한다."""
+    query = select(TechItem).order_by(TechItem.updated_at.desc())
+    if category is not None:
+        query = query.where(TechItem.category == category)
+    if created_after is not None:
+        query = query.where(TechItem.created_at >= created_after)
+
+    result = await db.execute(query)
+    all_items = result.scalars().all()
+
+    # 그룹화
+    groups: dict[str, list] = defaultdict(list)
+    group_order: list[str] = []
+    for item in all_items:
+        key = _group_key(item.title) or f"__single__{item.id}"
+        if key not in groups:
+            group_order.append(key)
+        groups[key].append(item)
+
+    # TechGroupedItem 목록 생성
+    def _patch_sort_key(i: TechItem) -> int:
+        info = _extract_version(i.title)
+        return info[3] if info else 0
+
+    grouped: list[TechGroupedItem] = []
+    for key in group_order:
+        items_in_group = groups[key]
+        # patch 번호 내림차순 정렬
+        items_in_group.sort(key=_patch_sort_key, reverse=True)
+        latest = items_in_group[0]
+
+        if key.startswith("__single__"):
+            base_title = latest.title
+            version_prefix = ""
+        else:
+            info = _extract_version(latest.title)
+            base_title = info[0] if info else latest.title
+            version_prefix = f"v{info[1]}.{info[2]}" if info else ""
+
+        chips = [
+            PatchVersionChip(
+                id=i.id,
+                title=i.title,
+                version_str=_version_str(i.title),
+                updated_at=i.updated_at,
+            )
+            for i in items_in_group
+        ]
+
+        grouped.append(
+            TechGroupedItem(
+                group_key=key,
+                base_title=base_title,
+                version_prefix=version_prefix,
+                patch_count=len(items_in_group),
+                latest=TechItemList.model_validate(latest),
+                patches=chips,
+            )
+        )
+
+    total = len(grouped)
+    offset = (page - 1) * size
+    page_items = grouped[offset : offset + size]
+
+    return PaginatedResponse.create(items=page_items, total=total, page=page, size=size)
+
+
 # ─── GET /api/tech/{id} ────────────────────────────────────────────────────────
 
 @router.get("/tech/{item_id}", response_model=TechItemResponse)
@@ -165,6 +273,51 @@ async def get_tech_item(
         )
 
     return TechItemResponse.model_validate(item)
+
+
+# ─── GET /api/tech/{id}/siblings ───────────────────────────────────────────────
+
+@router.get("/tech/{item_id}/siblings", response_model=list[PatchVersionSummary])
+async def get_tech_siblings(
+    item_id: uuid.UUID,
+    db: DbDep,
+) -> list[PatchVersionSummary]:
+    """같은 major.minor 버전 그룹의 모든 패치를 반환한다."""
+    result = await db.execute(select(TechItem).where(TechItem.id == item_id))
+    item = result.scalar_one_or_none()
+    if item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="기술 항목을 찾을 수 없습니다.",
+        )
+
+    key = _group_key(item.title)
+    if not key:
+        return []
+
+    # 같은 카테고리 내 전체 항목 조회 후 Python 필터링
+    all_result = await db.execute(
+        select(TechItem).where(TechItem.category == item.category)
+    )
+    all_in_cat = all_result.scalars().all()
+    siblings = [s for s in all_in_cat if _group_key(s.title) == key]
+    siblings.sort(
+        key=lambda s: (_extract_version(s.title) or (s.title, 0, 0, 0))[3],
+        reverse=True,
+    )
+
+    return [
+        PatchVersionSummary(
+            id=s.id,
+            title=s.title,
+            version_str=_version_str(s.title),
+            summary=s.summary,
+            description=s.description,
+            updated_at=s.updated_at,
+            created_at=s.created_at,
+        )
+        for s in siblings
+    ]
 
 
 # ─── GET /api/categories ───────────────────────────────────────────────────────

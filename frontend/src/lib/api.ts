@@ -5,6 +5,8 @@ import type {
   CategoryCount,
   Category,
   Status,
+  TechGroupedItem,
+  PatchVersionSummary,
 } from "./types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -316,6 +318,88 @@ export async function addTechItem(
     token,
   );
   return normalizeTechItem(raw);
+}
+
+// ─── 패치 버전 그룹화 API ────────────────────────────────────────────────────────
+
+interface BackendPatchVersionChip {
+  id: string;
+  title: string;
+  version_str: string;
+  updated_at: string;
+}
+
+interface BackendTechGroupedItem {
+  group_key: string;
+  base_title: string;
+  version_prefix: string;
+  patch_count: number;
+  latest: BackendTechListItem;
+  patches: BackendPatchVersionChip[];
+}
+
+interface BackendPatchVersionSummary {
+  id: string;
+  title: string;
+  version_str: string;
+  summary: string | null;
+  description: string | null;
+  updated_at: string;
+  created_at: string;
+}
+
+function normalizeGroupedItem(raw: BackendTechGroupedItem): TechGroupedItem {
+  return {
+    group_key: raw.group_key,
+    base_title: raw.base_title,
+    version_prefix: raw.version_prefix,
+    patch_count: raw.patch_count,
+    latest: normalizeTechListItem(raw.latest),
+    patches: raw.patches.map((p) => ({
+      id: p.id,
+      title: p.title,
+      version_str: p.version_str,
+      updated_at: p.updated_at,
+    })),
+  };
+}
+
+export interface FetchTechGroupedParams {
+  page?: number;
+  size?: number;
+  category?: Category;
+  created_after?: string;
+}
+
+export async function fetchTechGrouped(
+  params: FetchTechGroupedParams = {},
+): Promise<PaginatedResponse<TechGroupedItem>> {
+  const qs = new URLSearchParams();
+  if (params.page !== undefined) qs.set("page", String(params.page));
+  if (params.size !== undefined) qs.set("size", String(params.size));
+  if (params.category) qs.set("category", params.category);
+  if (params.created_after) qs.set("created_after", params.created_after);
+  const query = qs.toString() ? `?${qs.toString()}` : "";
+  const raw = await apiFetch<BackendPaginatedResponse<BackendTechGroupedItem>>(
+    `/api/tech/grouped${query}`,
+  );
+  return {
+    ...raw,
+    items: raw.items.map(normalizeGroupedItem),
+  };
+}
+
+export async function fetchTechSiblings(id: string): Promise<PatchVersionSummary[]> {
+  const raw = await apiFetch<BackendPatchVersionSummary[]>(`/api/tech/${id}/siblings`);
+  return raw.map((s) => ({
+    id: s.id,
+    title: s.title,
+    version_str: s.version_str,
+    summary: s.summary,
+    description: s.description,
+    updated_at: s.updated_at,
+    created_at: s.created_at,
+  }));
 }
 
 export interface UpdateTechItemBody {

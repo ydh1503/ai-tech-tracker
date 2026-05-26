@@ -23,6 +23,7 @@
 | DB 자동 테이블 생성 (`create_tables()`) | `database.py` | 완료 |
 | 검색 범위 확장 (description + raw_content) + 관련도 정렬 | `routers/tech.py` | 완료 |
 | Atom 1.0 피드 (`/api/feed.xml`, 최근 20개) | `routers/tech.py` | 완료 |
+| 패치 버전 그룹화 엔드포인트 (`/api/tech/grouped`, `/api/tech/{id}/siblings`) | `routers/tech.py` | 완료 |
 
 ### 프론트엔드 (Next.js 15)
 
@@ -42,6 +43,8 @@
 | CategoryNav deprecated 배지 | `components/CategoryNav.tsx` | 완료 |
 | Admin deprecated_by_id 입력 + claude_code 카테고리 + 크롤 트리거 버튼 | `app/admin/page.tsx` | 완료 |
 | 기술 비교 페이지 (`/compare?a=ID&b=ID`) | `app/compare/page.tsx` | 완료 |
+| 패치 버전 그룹화 카드 | `components/TechGroupCard.tsx` | 완료 |
+| 패치 버전 선택 뷰어 | `components/PatchVersionViewer.tsx` | 완료 |
 
 ---
 
@@ -343,6 +346,26 @@ UI 구조:
 | Agent-A | FEAT-1: Claude Code 소스 + 카테고리 | `crawler.py`, `models/tech.py`, `ai_processor.py`, `types.ts` |
 | Agent-B | FEAT-2: 카테고리 설명 헤더 | `types.ts`, `app/category/[slug]/page.tsx`, `components/CategoryNav.tsx` |
 | Agent-C | FEAT-3: 페이지네이션 UI | `components/Pagination.tsx` (신규), `app/page.tsx`, `app/category/[slug]/page.tsx`, `app/search/page.tsx` |
+
+---
+
+## 스프린트 5 ✅ 완료 (2026-05-27)
+
+### [P4-1] 패치 버전 그룹화 ✅
+- 동일 기술의 `major.minor`가 같고 `patch`만 올라간 항목을 목록에서 하나의 카드로 묶어 표시
+- 그룹 카드: `base_title` + "v{major}.{minor} · N개 패치" 배지, 최신 버전 요약, 버전 칩 최대 3개 표시
+- 상세 페이지: 같은 그룹의 패치 버전 버튼들로 선택 → 해당 버전 변경 내역 인라인 표시 (클라이언트 컴포넌트)
+
+**변경 파일**:
+- `backend/app/schemas/tech.py` — `PatchVersionChip`, `PatchVersionSummary`, `TechGroupedItem` 추가
+- `backend/app/routers/tech.py` — `/api/tech/grouped`, `/api/tech/{id}/siblings` 엔드포인트 추가
+- `frontend/src/lib/types.ts` — `PatchVersionChip`, `PatchVersionSummary`, `TechGroupedItem` 추가
+- `frontend/src/lib/api.ts` — `fetchTechGrouped()`, `fetchTechSiblings()` 추가
+- `frontend/src/components/TechGroupCard.tsx` — 신규 (그룹 카드 컴포넌트)
+- `frontend/src/components/PatchVersionViewer.tsx` — 신규 (클라이언트 버전 선택기)
+- `frontend/src/app/page.tsx` — grouped 엔드포인트 사용
+- `frontend/src/app/category/[slug]/page.tsx` — grouped 엔드포인트 사용
+- `frontend/src/app/tech/[id]/page.tsx` — siblings 섹션 추가
 
 ---
 
