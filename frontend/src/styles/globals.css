@@ -1,0 +1,31 @@
+/* Noto Sans KR — Google Fonts CDN (next/font/google 빌드 행 우회) */
+/* @import url() 은 @import "tailwindcss" 보다 앞에 위치해야 합니다 */
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap");
+
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Noto Sans KR", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html {
+    word-break: keep-all;
+    overflow-wrap: break-word;
+  }
+
+  body {
+    font-family: "Noto Sans KR", ui-sans-serif, system-ui, sans-serif;
+    @apply bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
