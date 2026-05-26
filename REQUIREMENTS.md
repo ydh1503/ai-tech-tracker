@@ -22,6 +22,7 @@
 | Redis 캐시 (categories, timeline TTL 300초) + 크롤 후 무효화 | `cache.py` | 완료 |
 | DB 자동 테이블 생성 (`create_tables()`) | `database.py` | 완료 |
 | 검색 범위 확장 (description + raw_content) + 관련도 정렬 | `routers/tech.py` | 완료 |
+| Atom 1.0 피드 (`/api/feed.xml`, 최근 20개) | `routers/tech.py` | 완료 |
 
 ### 프론트엔드 (Next.js 15)
 
@@ -39,6 +40,8 @@
 | 페이지네이션 UI | `components/Pagination.tsx`, 각 목록 페이지 | 완료 |
 | 기술 상세 페이지 raw_content + 관련 항목 | `app/tech/[id]/page.tsx` | 완료 |
 | CategoryNav deprecated 배지 | `components/CategoryNav.tsx` | 완료 |
+| Admin deprecated_by_id 입력 + claude_code 카테고리 + 크롤 트리거 버튼 | `app/admin/page.tsx` | 완료 |
+| 기술 비교 페이지 (`/compare?a=ID&b=ID`) | `app/compare/page.tsx` | 완료 |
 
 ---
 
@@ -340,6 +343,31 @@ UI 구조:
 | Agent-A | FEAT-1: Claude Code 소스 + 카테고리 | `crawler.py`, `models/tech.py`, `ai_processor.py`, `types.ts` |
 | Agent-B | FEAT-2: 카테고리 설명 헤더 | `types.ts`, `app/category/[slug]/page.tsx`, `components/CategoryNav.tsx` |
 | Agent-C | FEAT-3: 페이지네이션 UI | `components/Pagination.tsx` (신규), `app/page.tsx`, `app/category/[slug]/page.tsx`, `app/search/page.tsx` |
+
+---
+
+## 스프린트 4 ✅ 완료 (2026-05-27)
+
+### [P1-2] Deprecated 추적 강화 ✅
+- Admin ReviewQueue에 대체 기술 ID 입력 필드 추가 (승인 시 `deprecated_by_id` 연결)
+- Admin CATEGORIES 목록에 `claude_code` 누락 수정
+- Admin에 크롤 수동 트리거 버튼 추가
+
+**변경 파일**: `frontend/src/app/admin/page.tsx`
+
+### [P3-1] RSS/Atom 피드 ✅
+- 백엔드 `/api/feed.xml` 엔드포인트 — 최근 20개 항목을 Atom 1.0 XML로 반환
+- `layout.tsx` `<head>`에 `<link rel="alternate" type="application/atom+xml" href="/feed.xml">` 추가
+- Next.js rewrite 규칙으로 `/feed.xml` → `/api/feed.xml` 프록시 연결
+
+**변경 파일**: `backend/app/routers/tech.py`, `frontend/src/app/layout.tsx`, `frontend/next.config.ts`
+
+### [P3-4] 기술 비교 페이지 ✅
+- `/compare?a=ID1&b=ID2` — 두 항목 나란히 비교
+- `fetchTechById` 두 번 호출, 필드별 차이 강조 표시 (다른 필드는 노란 배경으로 구분)
+- 상세 설명 나란히 비교 섹션 및 원본 링크 포함
+
+**변경 파일**: `frontend/src/app/compare/page.tsx` (신규)
 
 ---
 

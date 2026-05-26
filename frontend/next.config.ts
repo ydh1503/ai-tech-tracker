@@ -13,6 +13,10 @@ const nextConfig: NextConfig = {
         source: "/api/:path*",
         destination: `${apiUrl}/api/:path*`,
       },
+      {
+        source: "/feed.xml",
+        destination: `${apiUrl}/api/feed.xml`,
+      },
     ];
   },
 };

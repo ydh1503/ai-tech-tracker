@@ -15,6 +15,11 @@ export const metadata: Metadata = {
     type: "website",
     locale: "ko_KR",
   },
+  alternates: {
+    types: {
+      "application/atom+xml": "/feed.xml",
+    },
+  },
 };
 
 export default function RootLayout({

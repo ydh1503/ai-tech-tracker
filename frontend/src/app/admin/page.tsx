@@ -19,13 +19,14 @@ import {
 
 interface QueueItemCardProps {
   item: ReviewQueueItem;
-  onApprove: (id: string, reason: string) => void;
+  onApprove: (id: string, reason: string, deprecatedById?: string) => void;
   onReject: (id: string) => void;
   loading: boolean;
 }
 
 function QueueItemCard({ item, onApprove, onReject, loading }: QueueItemCardProps) {
   const [reason, setReason] = useState(item.reason);
+  const [deprecatedById, setDeprecatedById] = useState("");
 
   return (
     <div className="rounded-xl border border-yellow-200 dark:border-yellow-800 bg-white dark:bg-slate-800 p-5">
@@ -59,6 +60,20 @@ function QueueItemCard({ item, onApprove, onReject, loading }: QueueItemCardProp
         />
       </div>
 
+      {/* 대체 기술 ID */}
+      <div className="mb-4">
+        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
+          대체 기술 ID (선택)
+        </label>
+        <input
+          type="text"
+          value={deprecatedById}
+          onChange={(e) => setDeprecatedById(e.target.value)}
+          className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-2 text-xs text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          placeholder="대체 기술 항목의 UUID (없으면 비워두기)"
+        />
+      </div>
+
       <div className="flex items-center justify-between gap-3">
         <span className="text-xs text-slate-400 dark:text-slate-500">
           감지 일시: {new Date(item.detected_at).toLocaleString("ko-KR")}
@@ -72,7 +87,7 @@ function QueueItemCard({ item, onApprove, onReject, loading }: QueueItemCardProp
             거부
           </button>
           <button
-            onClick={() => onApprove(item.id, reason.trim())}
+            onClick={() => onApprove(item.id, reason.trim(), deprecatedById.trim() || undefined)}
             disabled={loading || !reason.trim()}
             className="rounded-lg bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50"
           >
@@ -92,7 +107,7 @@ interface AddItemFormProps {
 }
 
 const CATEGORIES: Category[] = [
-  "skills", "harness", "agents", "orchestration", "integration", "prompting", "infra",
+  "skills", "harness", "agents", "orchestration", "integration", "prompting", "infra", "claude_code",
 ];
 const STATUSES: Status[] = ["active", "stable", "deprecated", "experimental"];
 
@@ -555,6 +570,8 @@ export default function AdminPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"queue" | "add" | "edit">("queue");
+  const [crawlLoading, setCrawlLoading] = useState(false);
+  const [crawlResult, setCrawlResult] = useState<string | null>(null);
 
   const loadQueue = useCallback(async (t: string) => {
     if (!t) return;
@@ -578,10 +595,36 @@ export default function AdminPage() {
     loadQueue(t);
   }
 
-  async function handleApprove(id: string, reason: string) {
+  async function handleTriggerCrawl() {
+    setCrawlLoading(true);
+    setCrawlResult(null);
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/admin/crawl/trigger`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${submittedToken}`,
+          },
+        },
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail ?? `HTTP ${res.status}`);
+      }
+      setCrawlResult("크롤링이 시작되었습니다.");
+    } catch (err) {
+      setCrawlResult(err instanceof Error ? err.message : "크롤 트리거 실패");
+    } finally {
+      setCrawlLoading(false);
+    }
+  }
+
+  async function handleApprove(id: string, reason: string, deprecatedById?: string) {
     setActionLoading(true);
     try {
-      await approveDeprecated(id, submittedToken, { reason });
+      await approveDeprecated(id, submittedToken, { reason, deprecated_by_id: deprecatedById });
     } catch (err) {
       alert(err instanceof Error ? err.message : "승인 실패");
       setActionLoading(false);
@@ -696,6 +739,31 @@ export default function AdminPage() {
           {/* 검토 큐 탭 */}
           {activeTab === "queue" && (
             <div>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-base font-semibold text-slate-700 dark:text-slate-300">
+                  검토 큐 {queue.length > 0 && `(${queue.length}건)`}
+                </h2>
+                <div className="flex items-center gap-3">
+                  {crawlResult && (
+                    <span className="text-xs text-green-600 dark:text-green-400">{crawlResult}</span>
+                  )}
+                  <button
+                    onClick={handleTriggerCrawl}
+                    disabled={crawlLoading}
+                    className="rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50"
+                  >
+                    {crawlLoading ? "크롤 중..." : "크롤 실행"}
+                  </button>
+                  <button
+                    onClick={() => loadQueue(submittedToken)}
+                    disabled={loadingQueue}
+                    className="rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:border-slate-400 transition-colors disabled:opacity-50"
+                  >
+                    새로고침
+                  </button>
+                </div>
+              </div>
+
               {loadingQueue && (
                 <div className="space-y-4">
                   {[1, 2, 3].map((i) => (

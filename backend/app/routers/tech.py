@@ -5,8 +5,10 @@ import json
 import uuid
 from datetime import datetime
 from typing import Annotated
+from xml.etree.ElementTree import Element, SubElement, tostring
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -255,3 +257,74 @@ async def get_timeline(db: DbDep) -> list[TimelineItem]:
     )
 
     return timeline
+
+
+# ─── GET /feed.xml ─────────────────────────────────────────────────────────────
+
+@router.get("/feed.xml", response_class=Response)
+async def get_atom_feed(db: DbDep) -> Response:
+    """최근 20개 항목을 Atom 1.0 XML로 반환한다."""
+    from datetime import timezone
+
+    result = await db.execute(
+        select(TechItem).order_by(TechItem.updated_at.desc()).limit(20)
+    )
+    items = result.scalars().all()
+
+    feed = Element("feed")
+    feed.set("xmlns", "http://www.w3.org/2005/Atom")
+
+    SubElement(feed, "title").text = "AI 기술 트래커"
+    SubElement(feed, "link", href="https://ai-tech-tracker.example.com", rel="alternate")
+    SubElement(
+        feed,
+        "link",
+        href="https://ai-tech-tracker.example.com/feed.xml",
+        rel="self",
+        type="application/atom+xml",
+    )
+    SubElement(feed, "id").text = "https://ai-tech-tracker.example.com/feed.xml"
+
+    updated_el = SubElement(feed, "updated")
+    now_utc = datetime.now(timezone.utc)
+    updated_el.text = (items[0].updated_at if items else now_utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+    for item in items:
+        entry = SubElement(feed, "entry")
+        SubElement(entry, "id").text = (
+            f"https://ai-tech-tracker.example.com/tech/{item.id}"
+        )
+        SubElement(entry, "title").text = item.title
+        SubElement(
+            entry,
+            "link",
+            href=f"https://ai-tech-tracker.example.com/tech/{item.id}",
+            rel="alternate",
+        )
+        SubElement(entry, "updated").text = item.updated_at.strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        SubElement(entry, "published").text = item.created_at.strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        if item.summary:
+            summary_el = SubElement(entry, "summary")
+            summary_el.set("type", "text")
+            summary_el.text = item.summary
+        if item.description:
+            content_el = SubElement(entry, "content")
+            content_el.set("type", "text")
+            content_el.text = item.description
+        cat_val = (
+            item.category.value
+            if hasattr(item.category, "value")
+            else str(item.category)
+        )
+        SubElement(entry, "category", term=cat_val)
+
+    xml_bytes = tostring(feed, encoding="utf-8", xml_declaration=True)
+    return Response(
+        content=xml_bytes, media_type="application/atom+xml; charset=utf-8"
+    )
