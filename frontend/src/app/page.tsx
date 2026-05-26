@@ -18,13 +18,12 @@ async function LatestTechList({ page = 1 }: { page?: number }) {
 
   try {
     const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);  // UTC 기준 자정 (배포 서버 타임존 무관)
+    today.setUTCHours(0, 0, 0, 0);
     const createdAfter = today.toISOString();
 
     result = await fetchTechList({ size: 20, page: 1, created_after: createdAfter });
 
     if (result.items.length === 0) {
-      // 오늘 업데이트가 없으면 전체 목록으로 fallback (페이지네이션 지원)
       isToday = false;
       result = await fetchTechList({ size: 20, page });
     }
@@ -44,21 +43,47 @@ async function LatestTechList({ page = 1 }: { page?: number }) {
     );
   }
 
+  const [featured, ...rest] = result.items;
+
   return (
     <section>
-      <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">
-        {isToday ? "오늘 업데이트" : "최근 업데이트"}
-      </h2>
-      {!isToday && (
-        <p className="text-xs text-slate-400 dark:text-slate-500 mb-3">
-          오늘 업데이트된 항목이 없어 최근 항목을 표시합니다.
-        </p>
-      )}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {result.items.map((item) => (
-          <TechCard key={item.id} item={item} />
-        ))}
+      {/* 섹션 헤더 */}
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">
+            {isToday ? "오늘 업데이트" : "최근 업데이트"}
+          </h2>
+          {isToday && (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+              </span>
+              {result.items.length}건
+            </span>
+          )}
+        </div>
+        {!isToday && (
+          <p className="text-xs text-slate-400 dark:text-slate-500">
+            오늘 업데이트 없음 — 최근 항목 표시
+          </p>
+        )}
       </div>
+
+      {/* Featured 카드 (첫 번째 항목) */}
+      <div className="mb-4">
+        <TechCard item={featured} featured />
+      </div>
+
+      {/* 나머지 카드 그리드 */}
+      {rest.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {rest.map((item) => (
+            <TechCard key={item.id} item={item} />
+          ))}
+        </div>
+      )}
+
       {!isToday && result.pages > 1 && (
         <div className="mt-8">
           <Pagination
@@ -83,13 +108,17 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   return (
     <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-8">
       {/* 히어로 */}
-      <div className="mb-8 text-center sm:text-left">
-        <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-          AI 기술 트래커
-        </h1>
-        <p className="mt-2 text-slate-500 dark:text-slate-400">
-          AI를 잘 활용하는 방법, 매일 업데이트
-        </p>
+      <div className="mb-8">
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+          <div>
+            <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
+              AI 기술 트래커
+            </h1>
+            <p className="mt-1.5 text-slate-500 dark:text-slate-400 text-sm">
+              AI를 잘 활용하는 방법, 매일 업데이트 — 스킬·에이전트·프롬프팅·인프라
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* 카테고리 네비게이션 */}
@@ -103,13 +132,11 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       <Suspense
         fallback={
           <section>
-            <div className="h-7 w-32 rounded bg-slate-100 dark:bg-slate-800 animate-pulse mb-4" />
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="h-7 w-32 rounded bg-slate-100 dark:bg-slate-800 animate-pulse mb-5" />
+            <div className="h-36 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse mb-4" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {Array.from({ length: 6 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="h-40 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse"
-                />
+                <div key={i} className="h-32 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse" />
               ))}
             </div>
           </section>

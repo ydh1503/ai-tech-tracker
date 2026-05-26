@@ -32,7 +32,7 @@ export default function RootLayout({
       <body>
         <div className="min-h-screen flex flex-col">
           {/* 헤더 */}
-          <header className="sticky top-0 z-40 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm">
+          <header className="sticky top-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800/80">
             <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
               <div className="flex h-14 items-center justify-between gap-4">
                 {/* 로고 */}
@@ -90,8 +90,7 @@ export default function RootLayout({
           <footer className="border-t border-slate-200 dark:border-slate-800 py-8 text-center text-xs text-slate-400 dark:text-slate-500">
             <div className="mx-auto max-w-6xl px-4">
               <p>AI 기술 트래커 — AI를 더 잘 활용하는 방법을 매일 업데이트합니다</p>
-              <p className="mt-1">
-                백엔드:{" "}
+              <p className="mt-1 flex items-center justify-center gap-3">
                 <a
                   href="http://localhost:8000/docs"
                   target="_blank"
@@ -99,6 +98,15 @@ export default function RootLayout({
                   className="underline hover:text-slate-600 dark:hover:text-slate-300"
                 >
                   API 문서
+                </a>
+                <span aria-hidden="true">·</span>
+                <a
+                  href="/feed.xml"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-slate-600 dark:hover:text-slate-300"
+                >
+                  RSS 피드
                 </a>
               </p>
             </div>
