@@ -1,10 +1,10 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { fetchTechById } from "@/lib/api";
+import { fetchTechById, fetchTechList } from "@/lib/api";
 import StatusBadge from "@/components/StatusBadge";
 import DeprecatedBanner from "@/components/DeprecatedBanner";
 import type { Metadata } from "next";
-import { CATEGORY_LABELS } from "@/lib/types";
+import { CATEGORY_LABELS, type TechItem } from "@/lib/types";
 
 export const revalidate = 60;
 
@@ -41,6 +41,15 @@ export default async function TechDetailPage({ params }: TechDetailPageProps) {
   if (!item) notFound();
 
   const isDeprecated = item.status === "deprecated";
+
+  // 관련 항목 (같은 카테고리)
+  let relatedItems: TechItem[] = [];
+  try {
+    const related = await fetchTechList({ category: item.category, size: 6 });
+    relatedItems = related.items.filter((r) => r.id !== item.id).slice(0, 5);
+  } catch {
+    // 관련 항목 없이 렌더링
+  }
 
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-8">
@@ -133,6 +142,23 @@ export default async function TechDetailPage({ params }: TechDetailPageProps) {
           </div>
         )}
 
+        {/* 원문 내용 (raw_content) */}
+        {item.raw_content && item.raw_content.trim().length > 0 && (
+          <details className="mb-6 group">
+            <summary className="cursor-pointer flex items-center gap-2 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors select-none list-none">
+              <svg className="h-4 w-4 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+              </svg>
+              원문 내용 보기
+            </summary>
+            <div className="mt-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 px-4 py-3 overflow-x-auto">
+              <pre className="text-xs text-slate-600 dark:text-slate-400 whitespace-pre-wrap font-mono leading-relaxed">
+                {item.raw_content}
+              </pre>
+            </div>
+          </details>
+        )}
+
         {/* 링크 버튼 */}
         <div className="flex flex-wrap gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
           {item.official_url && (
@@ -175,6 +201,40 @@ export default async function TechDetailPage({ params }: TechDetailPageProps) {
           </a>
         </div>
       </article>
+
+      {/* 관련 항목 */}
+      {relatedItems.length > 0 && (
+        <section className="mt-12 pt-8 border-t border-slate-100 dark:border-slate-800">
+          <h2 className="text-base font-semibold text-slate-700 dark:text-slate-300 mb-4">
+            같은 카테고리의 다른 항목
+          </h2>
+          <ul className="space-y-2">
+            {relatedItems.map((rel) => (
+              <li key={rel.id}>
+                <Link
+                  href={`/tech/${rel.id}`}
+                  className="flex items-center justify-between gap-2 rounded-lg px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group"
+                >
+                  <span className="text-sm text-slate-700 dark:text-slate-300 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors line-clamp-1">
+                    {rel.title}
+                  </span>
+                  <span className="text-xs text-slate-400 dark:text-slate-500 shrink-0">
+                    {new Date(rel.created_at).toLocaleDateString("ko-KR")}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3">
+            <Link
+              href={`/category/${item.category}`}
+              className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+            >
+              {CATEGORY_LABELS[item.category]} 전체 보기 →
+            </Link>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

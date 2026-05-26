@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -113,15 +113,22 @@ async def search_tech_items(
     """기술명·요약에서 검색한다 (대소문자 무시 부분 일치)."""
     search_term = f"%{q}%"
     query = select(TechItem).where(
-        TechItem.title.ilike(search_term) | TechItem.summary.ilike(search_term)
+        TechItem.title.ilike(search_term)
+        | TechItem.summary.ilike(search_term)
+        | TechItem.description.ilike(search_term)
+        | TechItem.raw_content.ilike(search_term)
     )
 
     count_query = select(func.count()).select_from(query.subquery())
     total_result = await db.execute(count_query)
     total = total_result.scalar_one()
 
+    relevance = case(
+        (TechItem.title.ilike(search_term), 0),
+        else_=1,
+    )
     offset = (page - 1) * size
-    query = query.order_by(TechItem.updated_at.desc()).offset(offset).limit(size)
+    query = query.order_by(relevance, TechItem.updated_at.desc()).offset(offset).limit(size)
 
     result = await db.execute(query)
     items = result.scalars().all()

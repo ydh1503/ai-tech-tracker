@@ -46,6 +46,7 @@ interface BackendTechItem {
   id: string;
   title: string;
   description: string | null;
+  raw_content: string | null;
   summary: string | null;
   category: Category;
   status: Status;
@@ -64,6 +65,7 @@ interface BackendTechItem {
 function normalizeTechItem(item: BackendTechItem): TechItem {
   return {
     ...item,
+    raw_content: item.raw_content,
     deprecated_by_title: item.deprecated_by_item?.title ?? null,
   };
 }
@@ -94,6 +96,7 @@ function normalizeTechListItem(item: BackendTechListItem): TechItem {
     id: item.id,
     title: item.title,
     description: null,          // TechItemList에 없음 (상세 페이지에서만 표시)
+    raw_content: null,          // TechItemList에 없음 (상세 페이지에서만 표시)
     summary: item.summary,
     category: item.category,
     status: item.status,
@@ -204,7 +207,12 @@ export async function searchTech(
 
 export async function fetchCategories(): Promise<CategoryCount[]> {
   const raw = await apiFetch<BackendCategoryCount[]>(`/api/categories`);
-  return raw.map((c) => ({ category: c.category, count: c.count }));
+  return raw.map((c) => ({
+    category: c.category,
+    count: c.count,
+    active_count: c.active_count,
+    deprecated_count: c.deprecated_count,
+  }));
 }
 
 export async function fetchTimeline(): Promise<TechItem[]> {
@@ -213,6 +221,7 @@ export async function fetchTimeline(): Promise<TechItem[]> {
     id: item.id,
     title: item.title,
     description: null,
+    raw_content: null,
     summary: item.summary,
     category: item.category,
     status: item.status,

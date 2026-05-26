@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { Category } from "@/lib/types";
+import type { Category, CategoryCount } from "@/lib/types";
 import { CATEGORY_LABELS, CATEGORY_META } from "@/lib/types";
 import { fetchCategories } from "@/lib/api";
 
@@ -8,7 +8,7 @@ interface CategoryNavProps {
 }
 
 export default async function CategoryNav({ activeCategory }: CategoryNavProps) {
-  let categoryCounts: Array<{ category: Category; count: number }> = [];
+  let categoryCounts: CategoryCount[] = [];
 
   try {
     categoryCounts = await fetchCategories();
@@ -17,6 +17,7 @@ export default async function CategoryNav({ activeCategory }: CategoryNavProps) 
   }
 
   const countMap = new Map(categoryCounts.map((c) => [c.category, c.count]));
+  const deprecatedMap = new Map(categoryCounts.map((c) => [c.category, c.deprecated_count]));
 
   const allCategories: Category[] = [
     "skills",
@@ -48,6 +49,7 @@ export default async function CategoryNav({ activeCategory }: CategoryNavProps) 
 
       {allCategories.map((cat) => {
         const count = countMap.get(cat);
+        const deprecatedCount = deprecatedMap.get(cat) ?? 0;
         const isActive = activeCategory === cat;
         return (
           <Link
@@ -70,6 +72,17 @@ export default async function CategoryNav({ activeCategory }: CategoryNavProps) 
                   }`}
               >
                 {count}
+              </span>
+            )}
+            {deprecatedCount > 0 && (
+              <span
+                className={`inline-flex items-center justify-center rounded-full text-xs min-w-[1.25rem] h-5 px-1 font-semibold
+                  ${isActive
+                    ? "bg-red-400/30 text-white"
+                    : "bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400"
+                  }`}
+              >
+                -{deprecatedCount}
               </span>
             )}
           </Link>

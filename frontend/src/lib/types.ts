@@ -14,6 +14,7 @@ export interface TechItem {
   id: string;
   title: string;
   description: string | null;
+  raw_content: string | null;
   summary: string | null;
   category: Category;
   status: Status;
@@ -47,6 +48,8 @@ export interface ReviewQueueItem {
 export interface CategoryCount {
   category: Category;
   count: number;
+  active_count: number;
+  deprecated_count: number;
 }
 
 

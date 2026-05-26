@@ -13,13 +13,15 @@
 | TechItem / CrawlLog / ReviewQueue 모델 | `models/tech.py` | 완료 |
 | 공개 API (목록, 상세, 검색, deprecated, 카테고리, 타임라인) | `routers/tech.py` | 완료 |
 | 관리자 API (deprecated 승인/거부, 수동 추가/수정/삭제, 크롤 트리거/로그) | `routers/admin.py` | 완료 |
-| RSS 수집 (HN, O'Reilly, GitHub Blog) | `services/crawler.py` | 완료 |
-| GitHub 릴리즈 수집 (LangChain, AutoGPT, CrewAI, AutoGen, anthropic-sdk-python) | `services/crawler.py` | 완료 |
+| RSS 수집 (HN, O'Reilly, GitHub Blog, Anthropic, OpenAI, Google) | `services/crawler.py` | 완료 |
+| GitHub 릴리즈 수집 (9개 레포, rate limit 재시도) | `services/crawler.py` | 완료 |
 | Claude AI 분류·요약·deprecated 후보 감지 (배치 + 프롬프트 캐싱) | `services/ai_processor.py` | 완료 |
+| AI 분류 시스템 프롬프트 개선 (SDK 규칙 명시 + few-shot) | `services/ai_processor.py` | 완료 |
 | 휴리스틱 deprecated 키워드 감지 | `utils/deprecated_detector.py` | 완료 |
-| APScheduler 크론 (매일 18:00 UTC = KST 03:00) | `services/scheduler.py` | 완료 |
-| Redis 캐시 (categories, timeline TTL 300초) | `cache.py` | 완료 |
+| AsyncIOScheduler 크론 (매일 18:00 UTC = KST 03:00) | `services/scheduler.py` | 완료 |
+| Redis 캐시 (categories, timeline TTL 300초) + 크롤 후 무효화 | `cache.py` | 완료 |
 | DB 자동 테이블 생성 (`create_tables()`) | `database.py` | 완료 |
+| 검색 범위 확장 (description + raw_content) + 관련도 정렬 | `routers/tech.py` | 완료 |
 
 ### 프론트엔드 (Next.js 15)
 
@@ -35,6 +37,8 @@
 | SearchBar / CategoryNav / Timeline | `components/` | 완료 |
 | 카테고리 설명 헤더 | `app/category/[slug]/page.tsx`, `components/CategoryNav.tsx` | 완료 |
 | 페이지네이션 UI | `components/Pagination.tsx`, 각 목록 페이지 | 완료 |
+| 기술 상세 페이지 raw_content + 관련 항목 | `app/tech/[id]/page.tsx` | 완료 |
+| CategoryNav deprecated 배지 | `components/CategoryNav.tsx` | 완료 |
 
 ---
 
@@ -339,7 +343,33 @@ UI 구조:
 
 ---
 
-## 스프린트 2 (다음 개발 대상)
+## 스프린트 3 ✅ 완료 (2026-05-27)
+
+### [P2-1] 기술 상세 페이지 정보 보강 ✅
+
+- `raw_content` 전문 접기/펼치기 `<details>` 섹션 추가
+- 같은 카테고리 최근 5개 관련 항목 섹션 추가
+- `TechItem` 타입에 `raw_content: string | null` 필드 추가
+
+**변경 파일**: `frontend/src/lib/types.ts`, `frontend/src/lib/api.ts`, `frontend/src/app/tech/[id]/page.tsx`
+
+### [P2-2] 검색 관련도 정렬 ✅
+
+- 검색 범위 `title + summary` → `title + summary + description + raw_content`로 확장
+- SQLAlchemy `case()` 식으로 제목 일치 항목 최상단 배치
+
+**변경 파일**: `backend/app/routers/tech.py`
+
+### [P2-3] CategoryCount 타입 완성 ✅
+
+- `CategoryCount`에 `active_count`, `deprecated_count` 필드 추가
+- `CategoryNav.tsx`에 deprecated 수 빨간 `-N` 배지 표시
+
+**변경 파일**: `frontend/src/lib/types.ts`, `frontend/src/lib/api.ts`, `frontend/src/components/CategoryNav.tsx`
+
+---
+
+## 스프린트 2 ✅ 완료 (2026-05-27)
 
 > 2026-05-27 Opus 평가 에이전트 결과를 바탕으로 도출한 긴급 수정 항목.
 > 스케줄러 충돌(치명)과 AI 분류 오류(높음)를 우선 처리한다.
@@ -499,22 +529,7 @@ feed = await loop.run_in_executor(None, feedparser.parse, source["url"])
 - Admin ReviewQueue 처리 UI 개선 (승인/거부 + 사유 입력)
 - deprecated 확정 시 관련 항목 자동 연결 (`replaces_id` 필드 활용)
 
-### P2 — 기능 완성
-
-**[P2-1] 기술 상세 페이지 정보 보강**
-- 현재 상세 페이지: 제목·요약·카테고리·날짜만 표시 — 방문 이유가 없음
-- `raw_content` 전문 표시 (마크다운 렌더링)
-- 관련 항목("같은 카테고리 최근 5개") 섹션 추가
-- 소스 링크를 눈에 띄는 CTA 버튼으로 변경
-
-**[P2-2] 검색 관련도 정렬**
-- 현재: `ILIKE` 부분일치 + `updated_at` 역순 — 관련도 없음
-- PostgreSQL `ts_rank` 또는 제목 일치 가중치 적용
-- `raw_content`/`description` 본문까지 검색 범위 확장
-
-**[P2-3] CategoryCount 타입 완성**
-- `types.ts`의 `CategoryCount`에 `active_count`, `deprecated_count` 필드 추가
-- `CategoryNav.tsx`에서 deprecated 수 배지 표시
+### P2 — 기능 완성 ✅ 스프린트 3에서 완료
 
 ### P3 — 고도화
 
