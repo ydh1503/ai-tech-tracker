@@ -219,8 +219,9 @@ async def list_grouped_tech_items(
         query = query.where(TechItem.status == status)
     if created_after is not None:
         query = query.where(TechItem.created_at >= created_after)
-    # category 필터 없을 때 전체 로드 상한 설정 (메모리 보호)
-    if category is None and created_after is None:
+    # 필터 전혀 없을 때만 전체 로드 상한 설정 (메모리 보호)
+    # status 단독 필터 시에도 상한을 걸면 조건에 맞는 항목이 누락될 수 있으므로 제외
+    if category is None and status is None and created_after is None:
         query = query.limit(500)
 
     result = await db.execute(query)
@@ -334,9 +335,15 @@ async def get_tech_siblings(
     base, major, minor, _ = info
     # base 내 LIKE 특수문자 이스케이프
     escaped_base = base.replace("%", r"\%").replace("_", r"\_")
-    pattern = f"{escaped_base} v{major}.{minor}.%"
+    # _VERSION_RE는 v?로 v 없는 버전도 파싱하므로 패턴도 두 형태 모두 허용
+    from sqlalchemy import or_
     all_result = await db.execute(
-        select(TechItem).where(TechItem.title.ilike(pattern))
+        select(TechItem).where(
+            or_(
+                TechItem.title.ilike(f"{escaped_base} v{major}.{minor}.%"),
+                TechItem.title.ilike(f"{escaped_base} {major}.{minor}.%"),
+            )
+        )
     )
     siblings = [s for s in all_result.scalars().all() if _group_key(s.title) == key]
     siblings.sort(

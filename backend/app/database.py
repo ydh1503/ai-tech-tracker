@@ -66,11 +66,11 @@ async def create_tables() -> None:
             END;
             $$ LANGUAGE plpgsql
         """))
-        await conn.execute(text(
-            "DROP TRIGGER IF EXISTS tsvector_update ON tech_items"
-        ))
+        # CREATE OR REPLACE TRIGGER (PostgreSQL 14+): DROP 없이 원자적 교체
+        # DROP+CREATE 방식은 두 DDL 사이 짧은 순간 트리거가 없어
+        # 동시 INSERT 발생 시 search_vector가 NULL로 저장되는 경쟁 창이 생긴다
         await conn.execute(text("""
-            CREATE TRIGGER tsvector_update
+            CREATE OR REPLACE TRIGGER tsvector_update
               BEFORE INSERT OR UPDATE ON tech_items
               FOR EACH ROW EXECUTE FUNCTION update_search_vector()
         """))

@@ -119,14 +119,7 @@ def _parse_response(content: str) -> ProcessedItem:
         )
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         logger.warning("Claude 응답 파싱 실패: %s | 원본: %s", e, content[:200])
-        return ProcessedItem(
-            is_relevant=False,
-            category=None,
-            summary=None,
-            description=None,
-            is_deprecated_candidate=False,
-            deprecated_reason=None,
-        )
+        return _FAIL_ITEM
 
 
 _FAIL_ITEM = ProcessedItem(

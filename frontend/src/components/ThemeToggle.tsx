@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
 
 export default function ThemeToggle() {
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => setMounted(true), []);
@@ -13,7 +13,8 @@ export default function ThemeToggle() {
     return <div className="h-8 w-8" />;
   }
 
-  const isDark = theme === "dark";
+  // resolvedTheme은 "system" 테마를 실제 OS 설정("dark"/"light")으로 해석한 값
+  const isDark = resolvedTheme === "dark";
 
   return (
     <button

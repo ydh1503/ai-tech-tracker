@@ -65,15 +65,16 @@ class SourceResult:
 def _infer_status(title: str, tag: str | None) -> TechStatus:
     """제목과 태그에서 초기 TechStatus를 추론한다."""
     combined = f"{title} {tag or ''}".lower()
-    if any(k in combined for k in ("alpha", "beta", ".rc", "-rc", "pre-", "preview", "experimental", "dev")):
+    # "dev"는 부분문자열 매칭 시 "developer"/"development"/"devtools" 등과 오탐하므로
+    # 릴리즈 태그에서 쓰이는 "-dev" / ".dev" 형태로만 검사한다
+    if any(k in combined for k in ("alpha", "beta", ".rc", "-rc", "pre-", "preview", "experimental", "-dev", ".dev")):
         return TechStatus.experimental
     return TechStatus.active
 
 
 # ─── S3: stable 전환 배치 ──────────────────────────────────────────────────────
 
-import re as _re
-_VER_RE_STABLE = _re.compile(r'^(.*?)\s+v?(\d+)\.(\d+)\.0\b', _re.IGNORECASE)
+_VER_RE_STABLE = re.compile(r'^(.*?)\s+v?(\d+)\.(\d+)\.0\b', re.IGNORECASE)
 
 
 async def promote_stable_items() -> int:
@@ -98,7 +99,7 @@ async def promote_stable_items() -> int:
             )
             await db.commit()
             logger.info("stable 전환 완료: %d개 항목", len(promote_ids))
-    return len(promote_ids) if promote_ids else 0
+    return len(promote_ids)
 
 
 # ─── S7: 소프트 중복 감지 헬퍼 ─────────────────────────────────────────────────
@@ -332,10 +333,12 @@ async def run_crawl() -> dict[str, object]:
     for item in all_raw_items:
         if item["source_url"] in existing_urls:
             continue
-        normalized = re.sub(r"[^a-z0-9\s]", "", str(item["title"]).lower()).strip()
-        if normalized in existing_titles or normalized in seen_titles:
+        # _is_soft_duplicate 헬퍼를 재사용해 정규화 로직 일원화
+        title_str = str(item["title"])
+        if _is_soft_duplicate(title_str, existing_titles) or _is_soft_duplicate(title_str, seen_titles):
             logger.info("[SOFT_DUP] 제목 중복 감지, 건너뜀: %s", item["title"])
             continue
+        normalized = re.sub(r"[^a-z0-9\s]", "", title_str.lower()).strip()
         seen_titles.add(normalized)
         new_items.append(item)
 
