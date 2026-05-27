@@ -52,6 +52,23 @@ services:
       - ./backend:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # 빌드 시 번들에 포함될 클라이언트 사이드 URL (브라우저 → 호스트 포트 포워딩)
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    container_name: ai_tracker_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      # 런타임 서버 사이드 URL (Next.js 서버 → backend 컨테이너 내부 통신)
+      BACKEND_URL: http://backend:8000
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+
 volumes:
   postgres_data:
   redis_data:

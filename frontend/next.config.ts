@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Docker 배포용 standalone 출력 (node server.js로 실행 가능한 최소 번들)
+  output: "standalone",
+
   // 백엔드 API URL을 환경 변수로 관리
   env: {
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000",

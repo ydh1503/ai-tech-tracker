@@ -9,7 +9,12 @@ import type {
   PatchVersionSummary,
 } from "./types";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// 서버 사이드(SSR/RSC): Docker 내부 네트워크 URL (BACKEND_URL) 우선 사용
+// 클라이언트 사이드(브라우저): 빌드 시 번들된 NEXT_PUBLIC_API_URL 사용
+const BASE_URL =
+  typeof window === "undefined"
+    ? (process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000")
+    : (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000");
 
 async function apiFetch<T>(
   path: string,
