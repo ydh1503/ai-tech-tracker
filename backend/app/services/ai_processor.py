@@ -16,12 +16,18 @@ BATCH_SIZE = 10
 _API_URL = "https://api.anthropic.com/v1/messages"
 _ANTHROPIC_VERSION = "2023-06-01"
 
-_SYSTEM_PROMPT = """당신은 AI 기술 정보 분류 전문가입니다.
-주어진 텍스트가 "AI를 활용하는 방법"과 관련된 기술 정보인지 판단하고,
+_SYSTEM_PROMPT = """당신은 AI 기술 정보 분류 및 한국어 해설 전문가입니다.
+
+이 서비스의 독자 정의:
+- Claude Code, ChatGPT, Gemini 같은 AI 도구를 일상에서 사용하는 **한국의 일반 사용자**
+- 개발자가 아닌 사람도 있으므로 쉬운 말로 설명해야 함
+- 핵심 관심사: "이게 나한테 어떤 도움이 되나? 내 AI 도구를 어떻게 더 잘 쓸 수 있나?"
+
+주어진 텍스트가 "AI를 더 잘 활용하는 방법"과 관련된 기술 정보인지 판단하고,
 관련 있다면 지정된 JSON 형식으로 반환하세요.
 
 판단 기준:
-- is_relevant: AI 모델 성능 비교/벤치마크는 제외. AI 활용 도구/기법/프레임워크/SDK만 포함.
+- is_relevant: AI 모델 성능 비교/벤치마크는 제외. AI 활용 도구/기법/프레임워크/SDK/업데이트만 포함.
 - category 정의:
   * skills: AI 능력 단위, 플러그인, 스킬 확장
   * harness: 실행환경, 프레임워크, 런타임
@@ -41,11 +47,24 @@ _SYSTEM_PROMPT = """당신은 AI 기술 정보 분류 전문가입니다.
 - is_deprecated_candidate: 텍스트에 "deprecated", "replaced by", "no longer recommended",
   "end of life", "EOL", "superseded", "discontinued", "archived" 등이 포함되면 true.
 
+summary 작성 기준:
+- 200자 이내 한국어
+- "무엇이 추가·변경됐는지"를 핵심만 담아 간결하게
+
+description 작성 기준 (가장 중요):
+- 500자 이내 한국어
+- 독자(한국 일반 사용자) 관점에서 "이게 나한테 왜 유용한가, 어떻게 쓸 수 있나"를 설명
+- Claude Code, ChatGPT, Gemini 등 실제 AI 도구 사용에 직접 연결되는 활용 팁 포함
+- 기술 용어는 괄호로 쉽게 풀어서 설명 (예: "MCP(AI가 외부 도구를 쓸 수 있게 연결해주는 방법)")
+- 영어 원문 번역이 아닌, 독자를 위한 **재해석**으로 작성
+- is_relevant가 false이면 null
+
 응답은 반드시 아래 JSON만 반환하고, 다른 텍스트는 포함하지 마세요:
 {
   "is_relevant": true,
   "category": "skills",
   "summary": "한국어 200자 이내 요약",
+  "description": "한국어 500자 이내 활용 설명 — 독자 관점에서 어떻게 쓸 수 있는지 위주로",
   "is_deprecated_candidate": false,
   "deprecated_reason": null
 }
@@ -62,6 +81,7 @@ class ProcessedItem:
     is_relevant: bool
     category: str | None
     summary: str | None
+    description: str | None
     is_deprecated_candidate: bool
     deprecated_reason: str | None
 
@@ -93,6 +113,7 @@ def _parse_response(content: str) -> ProcessedItem:
             is_relevant=bool(data.get("is_relevant", False)),
             category=data.get("category"),
             summary=data.get("summary"),
+            description=data.get("description"),
             is_deprecated_candidate=bool(data.get("is_deprecated_candidate", False)),
             deprecated_reason=data.get("deprecated_reason"),
         )
@@ -102,6 +123,7 @@ def _parse_response(content: str) -> ProcessedItem:
             is_relevant=False,
             category=None,
             summary=None,
+            description=None,
             is_deprecated_candidate=False,
             deprecated_reason=None,
         )
@@ -111,6 +133,7 @@ _FAIL_ITEM = ProcessedItem(
     is_relevant=False,
     category=None,
     summary=None,
+    description=None,
     is_deprecated_candidate=False,
     deprecated_reason=None,
 )

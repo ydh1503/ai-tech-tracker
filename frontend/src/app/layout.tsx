@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import "@/styles/globals.css";
 import Link from "next/link";
 import SearchBar from "@/components/SearchBar";
+import ThemeProviderWrapper from "@/components/ThemeProviderWrapper";
+import ThemeToggle from "@/components/ThemeToggle";
 
 export const metadata: Metadata = {
   title: {
@@ -30,6 +32,7 @@ export default function RootLayout({
   return (
     <html lang="ko" suppressHydrationWarning>
       <body>
+        <ThemeProviderWrapper>
         <div className="min-h-screen flex flex-col">
           {/* 헤더 */}
           <header className="sticky top-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800/80">
@@ -76,6 +79,7 @@ export default function RootLayout({
                   >
                     관리자
                   </Link>
+                  <ThemeToggle />
                 </nav>
               </div>
             </div>
@@ -112,6 +116,7 @@ export default function RootLayout({
             </div>
           </footer>
         </div>
+        </ThemeProviderWrapper>
       </body>
     </html>
   );

@@ -3,7 +3,9 @@ import { fetchTechGrouped } from "@/lib/api";
 import TechGroupCard from "@/components/TechGroupCard";
 import CategoryNav from "@/components/CategoryNav";
 import Pagination from "@/components/Pagination";
+import FilterBar from "@/components/FilterBar";
 import type { Metadata } from "next";
+import type { Status } from "@/lib/types";
 
 export const metadata: Metadata = {
   title: "AI 기술 트래커",
@@ -12,20 +14,50 @@ export const metadata: Metadata = {
 
 export const revalidate = 60;
 
-async function LatestTechList({ page = 1 }: { page?: number }) {
+function rangeToCreatedAfter(range?: string): string | undefined {
+  const now = new Date();
+  if (range === "today") { now.setUTCHours(0, 0, 0, 0); return now.toISOString(); }
+  if (range === "week") { now.setDate(now.getDate() - 7); return now.toISOString(); }
+  if (range === "month") { now.setMonth(now.getMonth() - 1); return now.toISOString(); }
+  return undefined;
+}
+
+async function LatestTechList({
+  page = 1,
+  status,
+  range,
+}: {
+  page?: number;
+  status?: string;
+  range?: string;
+}) {
   let result;
   let isToday = true;
 
+  const statusParam = (status && status !== "all") ? status as Status : undefined;
+  const createdAfterParam = rangeToCreatedAfter(range);
+
   try {
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-    const createdAfter = today.toISOString();
-
-    result = await fetchTechGrouped({ size: 20, page: 1, created_after: createdAfter });
-
-    if (result.items.length === 0) {
+    // If explicit filter applied, skip "today" logic and use filter directly
+    if (statusParam || createdAfterParam) {
       isToday = false;
-      result = await fetchTechGrouped({ size: 20, page });
+      result = await fetchTechGrouped({
+        size: 20,
+        page,
+        status: statusParam,
+        created_after: createdAfterParam,
+      });
+    } else {
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const createdAfter = today.toISOString();
+
+      result = await fetchTechGrouped({ size: 20, page: 1, created_after: createdAfter });
+
+      if (result.items.length === 0) {
+        isToday = false;
+        result = await fetchTechGrouped({ size: 20, page });
+      }
     }
   } catch {
     return (
@@ -98,12 +130,14 @@ async function LatestTechList({ page = 1 }: { page?: number }) {
 }
 
 interface HomePageProps {
-  searchParams?: Promise<{ page?: string }>;
+  searchParams?: Promise<{ page?: string; status?: string; range?: string }>;
 }
 
 export default async function HomePage({ searchParams }: HomePageProps) {
-  const resolvedSearch = await (searchParams ?? Promise.resolve<{ page?: string }>({}));
+  const resolvedSearch = await (searchParams ?? Promise.resolve<{ page?: string; status?: string; range?: string }>({}));
   const page = Number(resolvedSearch.page ?? 1);
+  const status = resolvedSearch.status ?? "all";
+  const range = resolvedSearch.range ?? "all";
 
   return (
     <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-8">
@@ -128,6 +162,9 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         </Suspense>
       </div>
 
+      {/* 필터 바 */}
+      <FilterBar basePath="/" currentStatus={status} currentRange={range} />
+
       {/* 기술 카드 목록 */}
       <Suspense
         fallback={
@@ -142,7 +179,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
           </section>
         }
       >
-        <LatestTechList page={page} />
+        <LatestTechList page={page} status={status} range={range} />
       </Suspense>
     </div>
   );

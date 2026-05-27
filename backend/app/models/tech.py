@@ -8,7 +8,7 @@ from enum import Enum as PyEnum
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -73,6 +73,8 @@ class TechItem(Base):
     tech_released_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    search_vector: Mapped[str | None] = mapped_column(TSVECTOR, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False

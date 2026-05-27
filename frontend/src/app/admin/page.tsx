@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import type { ReviewQueueItem, Category, Status } from "@/lib/types";
 import { CATEGORY_LABELS, STATUS_LABELS } from "@/lib/types";
 import StatusBadge from "@/components/StatusBadge";
@@ -11,8 +11,10 @@ import {
   rejectDeprecated,
   addTechItem,
   updateTechItem,
+  fetchCrawlLogs,
   type AddTechItemBody,
   type UpdateTechItemBody,
+  type CrawlLogItem,
 } from "@/lib/api";
 
 // ─── 검토 큐 카드 ──────────────────────────────────────────────────────────────
@@ -27,6 +29,27 @@ interface QueueItemCardProps {
 function QueueItemCard({ item, onApprove, onReject, loading }: QueueItemCardProps) {
   const [reason, setReason] = useState(item.reason);
   const [deprecatedById, setDeprecatedById] = useState("");
+  const [replacementQuery, setReplacementQuery] = useState("");
+  const [replacementResults, setReplacementResults] = useState<{ id: string; title: string }[]>([]);
+  const [replacementLabel, setReplacementLabel] = useState("");
+  const [showDropdown, setShowDropdown] = useState(false);
+  const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleReplacementSearch = (q: string) => {
+    setReplacementQuery(q);
+    setReplacementLabel(q);
+    setDeprecatedById("");
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    if (!q.trim()) { setReplacementResults([]); setShowDropdown(false); return; }
+    searchTimeout.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/tech/search?q=${encodeURIComponent(q)}&size=5`);
+        const data = await res.json();
+        setReplacementResults(data.items ?? []);
+        setShowDropdown(true);
+      } catch { setReplacementResults([]); }
+    }, 300);
+  };
 
   return (
     <div className="rounded-xl border border-yellow-200 dark:border-yellow-800 bg-white dark:bg-slate-800 p-5">
@@ -60,18 +83,45 @@ function QueueItemCard({ item, onApprove, onReject, loading }: QueueItemCardProp
         />
       </div>
 
-      {/* 대체 기술 ID */}
-      <div className="mb-4">
+      {/* 대체 기술 검색 */}
+      <div className="mb-4 relative">
         <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
-          대체 기술 ID (선택)
+          대체 기술 검색 (선택)
         </label>
-        <input
-          type="text"
-          value={deprecatedById}
-          onChange={(e) => setDeprecatedById(e.target.value)}
-          className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-2 text-xs text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-          placeholder="대체 기술 항목의 UUID (없으면 비워두기)"
-        />
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={replacementLabel}
+            onChange={(e) => handleReplacementSearch(e.target.value)}
+            onFocus={() => replacementResults.length > 0 && setShowDropdown(true)}
+            className="flex-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-2 text-xs text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            placeholder="기술명으로 검색..."
+          />
+          {deprecatedById && (
+            <button
+              type="button"
+              onClick={() => { setDeprecatedById(""); setReplacementLabel(""); setReplacementResults([]); }}
+              className="text-xs text-slate-400 hover:text-red-500 transition-colors"
+            >
+              ×
+            </button>
+          )}
+        </div>
+        {showDropdown && replacementResults.length > 0 && (
+          <ul className="absolute z-10 mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg max-h-48 overflow-auto">
+            {replacementResults.map((r) => (
+              <li key={r.id}>
+                <button
+                  type="button"
+                  onClick={() => { setDeprecatedById(r.id); setReplacementLabel(r.title); setShowDropdown(false); }}
+                  className="w-full text-left px-3 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 truncate"
+                >
+                  {r.title}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       <div className="flex items-center justify-between gap-3">
@@ -569,9 +619,11 @@ export default function AdminPage() {
   const [loadingQueue, setLoadingQueue] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"queue" | "add" | "edit">("queue");
+  const [activeTab, setActiveTab] = useState<"queue" | "add" | "edit" | "logs">("queue");
   const [crawlLoading, setCrawlLoading] = useState(false);
   const [crawlResult, setCrawlResult] = useState<string | null>(null);
+  const [crawlLogs, setCrawlLogs] = useState<CrawlLogItem[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
 
   const loadQueue = useCallback(async (t: string) => {
     if (!t) return;
@@ -587,12 +639,26 @@ export default function AdminPage() {
     }
   }, []);
 
+  const loadCrawlLogs = useCallback(async (t: string) => {
+    if (!t) return;
+    setLogsLoading(true);
+    try {
+      const res = await fetchCrawlLogs(t, 1);
+      setCrawlLogs(res.items);
+    } catch {
+      setCrawlLogs([]);
+    } finally {
+      setLogsLoading(false);
+    }
+  }, []);
+
   function handleTokenSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const t = token.trim();
     if (!t) return;
     setSubmittedToken(t);
     loadQueue(t);
+    loadCrawlLogs(t);
   }
 
   async function handleTriggerCrawl() {
@@ -734,6 +800,16 @@ export default function AdminPage() {
             >
               항목 수정
             </button>
+            <button
+              onClick={() => { setActiveTab("logs"); loadCrawlLogs(submittedToken); }}
+              className={`flex-1 rounded-lg py-2 text-sm font-medium transition-colors
+                ${activeTab === "logs"
+                  ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-sm"
+                  : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                }`}
+            >
+              크롤 로그
+            </button>
           </div>
 
           {/* 검토 큐 탭 */}
@@ -829,6 +905,54 @@ export default function AdminPage() {
               </h2>
               <EditItemForm token={submittedToken} />
             </div>
+          )}
+
+          {/* 크롤 로그 탭 */}
+          {activeTab === "logs" && (
+            <section>
+              <h2 className="text-base font-semibold text-slate-700 dark:text-slate-300 mb-4">크롤링 로그</h2>
+              {logsLoading ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-16 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse" />
+                  ))}
+                </div>
+              ) : crawlLogs.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">크롤 로그가 없습니다.</p>
+              ) : (
+                <div className="space-y-2">
+                  {crawlLogs.map((log) => (
+                    <div
+                      key={log.id}
+                      className={`rounded-xl border px-4 py-3 text-sm flex items-start justify-between gap-3 ${
+                        log.error
+                          ? "border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20"
+                          : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium text-slate-800 dark:text-slate-200 truncate">{log.source}</p>
+                        <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                          {new Date(log.crawled_at).toLocaleString("ko-KR")}
+                        </p>
+                        {log.error && (
+                          <p className="text-xs text-red-600 dark:text-red-400 mt-1 line-clamp-2">{log.error}</p>
+                        )}
+                      </div>
+                      <div className="flex-shrink-0 text-right">
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                          log.error
+                            ? "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300"
+                            : "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
+                        }`}>
+                          {log.error ? "오류" : `+${log.items_added}건`}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
           )}
         </>
       )}

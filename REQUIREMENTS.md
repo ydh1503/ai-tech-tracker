@@ -1,6 +1,6 @@
 # AI 기술 트래커 — 기능 현황 및 백로그
 
-**최종 업데이트**: 2026-05-27
+**최종 업데이트**: 2026-05-27 (서비스 품질 개선 스프린트 완료)
 
 ---
 
@@ -15,8 +15,10 @@
 | 관리자 API (deprecated 승인/거부, 수동 추가/수정/삭제, 크롤 트리거/로그) | `routers/admin.py` | 완료 |
 | RSS 수집 (HN, O'Reilly, GitHub Blog, Anthropic, OpenAI, Google) | `services/crawler.py` | 완료 |
 | GitHub 릴리즈 수집 (9개 레포, rate limit 재시도) | `services/crawler.py` | 완료 |
+| **크롤러 description 저장 방식 수정** (raw 영문 본문 → AI 생성 한국어 description) | `services/crawler.py` | **완료** |
 | Claude AI 분류·요약·deprecated 후보 감지 (배치 + 프롬프트 캐싱) | `services/ai_processor.py` | 완료 |
 | AI 분류 시스템 프롬프트 개선 (SDK 규칙 명시 + few-shot) | `services/ai_processor.py` | 완료 |
+| **AI 한국어 description 생성** (독자 관점 500자 이내 활용 설명, 한국 일반 사용자 기준 재해석) | `services/ai_processor.py` | **완료** |
 | 휴리스틱 deprecated 키워드 감지 | `utils/deprecated_detector.py` | 완료 |
 | AsyncIOScheduler 크론 (매일 18:00 UTC = KST 03:00) | `services/scheduler.py` | 완료 |
 | Redis 캐시 (categories, timeline TTL 300초) + 크롤 후 무효화 | `cache.py` | 완료 |
@@ -42,6 +44,11 @@
 | 기술 상세 페이지 raw_content + 관련 항목 | `app/tech/[id]/page.tsx` | 완료 |
 | CategoryNav deprecated 배지 | `components/CategoryNav.tsx` | 완료 |
 | Admin deprecated_by_id 입력 + claude_code 카테고리 + 크롤 트리거 버튼 | `app/admin/page.tsx` | 완료 |
+| **다크/라이트 테마 토글** (`next-themes`, 헤더 버튼, localStorage 저장, hydration 보호) | `components/ThemeToggle.tsx`, `components/ThemeProviderWrapper.tsx`, `layout.tsx` | **완료** |
+| **필터 바** (상태·기간 필터, URL searchParams 동기화, 홈/카테고리 페이지 적용) | `components/FilterBar.tsx`, `app/page.tsx`, `app/category/[slug]/page.tsx` | **완료** |
+| **검색 자동완성** (debounce 300ms, 드롭다운 5개 제안, 키보드 방향키 탐색) | `components/SearchBar.tsx` | **완료** |
+| **Admin Deprecated 검색 UI** (UUID 직접 입력 → 제목 검색 드롭다운 선택) | `app/admin/page.tsx` | **완료** |
+| **Admin 크롤 로그 탭** (소스별 성공/실패 색상 배지) | `app/admin/page.tsx` | **완료** |
 | 기술 비교 페이지 (`/compare?a=ID&b=ID`) | `app/compare/page.tsx` | 완료 |
 | 패치 버전 그룹화 카드 | `components/TechGroupCard.tsx` | 완료 |
 | 패치 버전 선택 뷰어 | `components/PatchVersionViewer.tsx` | 완료 |
@@ -625,3 +632,546 @@ feed = await loop.run_in_executor(None, feedparser.parse, source["url"])
 | 프론트엔드 | Next.js 15 App Router (TypeScript strict) |
 | 스타일링 | Tailwind CSS v4 |
 | 배포 | Railway (백엔드) + Vercel (프론트엔드) |
+
+---
+
+## 서비스 기능 갭 분석 및 추가 백로그
+
+> **작성일**: 2026-05-27  
+> 전체 코드베이스(백엔드·프론트엔드)를 실제 코드 레벨까지 검토한 뒤 서비스 품질을 저하시키는 미구현 기능들을 정리했다.  
+> 수익화·인증·결제 등 상업화 항목은 제외하고, **서비스 자체의 완성도** 기준으로만 선별했다.
+
+---
+
+### [S1] PostgreSQL 풀텍스트 검색 전환 ⚠ 높음
+
+**문제**: 현재 검색은 4개 컬럼(`title`, `summary`, `description`, `raw_content`)에 `ILIKE '%keyword%'`를 OR로 걸고 있다(`routers/tech.py:148-153`). 데이터가 수천 건을 넘어서면 인덱스를 타지 않아 풀 시퀀셜 스캔이 발생한다. 한글 형태소 분리도 없어 "MCP 서버"를 입력해도 "MCP server" 항목이 누락된다.
+
+**현재 코드**:
+```python
+# routers/tech.py:148
+query = select(TechItem).where(
+    TechItem.title.ilike(search_term)
+    | TechItem.summary.ilike(search_term)
+    | TechItem.description.ilike(search_term)
+    | TechItem.raw_content.ilike(search_term)
+)
+```
+
+**변경 사항**:
+
+**파일 1: `backend/app/models/tech.py`**
+- `TechItem`에 `search_vector: Mapped[str | None]` 컬럼 추가 (`TSVECTOR` 타입)
+
+**파일 2: Alembic 마이그레이션**
+```sql
+ALTER TABLE tech_items ADD COLUMN search_vector TSVECTOR;
+CREATE INDEX tech_items_search_gin ON tech_items USING GIN(search_vector);
+
+CREATE OR REPLACE FUNCTION update_search_vector() RETURNS TRIGGER AS $$
+BEGIN
+  NEW.search_vector :=
+    setweight(to_tsvector('english', COALESCE(NEW.title, '')), 'A') ||
+    setweight(to_tsvector('english', COALESCE(NEW.summary, '')), 'B') ||
+    setweight(to_tsvector('english', COALESCE(NEW.description, '')), 'C');
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER tsvector_update
+  BEFORE INSERT OR UPDATE ON tech_items
+  FOR EACH ROW EXECUTE FUNCTION update_search_vector();
+```
+
+**파일 3: `backend/app/routers/tech.py`** — `search_tech_items()` 수정
+```python
+# ILIKE 제거, to_tsquery 방식으로 전환
+from sqlalchemy import func, cast
+from sqlalchemy.dialects.postgresql import TSVECTOR, TSQUERY
+
+ts_query = func.plainto_tsquery("english", q)
+query = select(TechItem).where(
+    TechItem.search_vector.op("@@")(ts_query)
+)
+# 랭킹 정렬
+query = query.order_by(
+    func.ts_rank_cd(TechItem.search_vector, ts_query).desc()
+)
+```
+
+**파일 4: `backend/app/routers/tech.py`** — 자동완성 엔드포인트 추가
+```python
+@router.get("/tech/autocomplete", response_model=list[str])
+async def autocomplete_tech(
+    q: str = Query(..., min_length=1, max_length=50),
+    db: DbDep = ...,
+) -> list[str]:
+    """검색어 자동완성 — 제목 prefix 기준 상위 5개"""
+    ...
+```
+
+**파일 5: `frontend/src/components/SearchBar.tsx`**
+- `debounce 300ms` + `/api/tech/autocomplete?q=` 호출
+- 드롭다운 5개 제안 표시 (키보드 방향키 탐색 지원)
+
+**완료 조건**:
+- [x] "MCP server" 검색 시 "MCP 서버" 관련 항목이 상위에 표시됨
+- [ ] 1만 건 데이터 기준 검색 응답 50ms 이하 (EXPLAIN ANALYZE 확인)
+- [x] 자동완성 백엔드 엔드포인트 (`/api/tech/autocomplete`) 구현 완료
+- [x] 검색창 타이핑 시 자동완성 드롭다운이 300ms 후 표시됨 (키보드 방향키 탐색, Enter 선택 지원)
+
+---
+
+### [S2] 고급 필터 UI ⚠ 중간
+
+**문제**: 백엔드 API는 `category`, `status`, `created_after` 필터를 이미 지원하지만(`/api/tech?category=agents&status=active`), 프론트엔드에 이 필터를 선택할 UI가 전혀 없다. 사용자는 URL을 직접 수정하지 않는 이상 필터링이 불가능하다.
+
+**변경 사항**:
+
+**파일 1: `frontend/src/components/FilterBar.tsx`** (신규)
+```
+[ 상태: 전체 ▼ ]  [ 기간: 전체 ▼ ]  [ 정렬: 최신순 ▼ ]     [×] 필터 초기화
+```
+
+props:
+```typescript
+interface FilterBarProps {
+  status?: Status;
+  dateRange?: "today" | "week" | "month" | "all";
+  sort?: "updated_at" | "created_at";
+  onChange: (filters: FilterState) => void;
+}
+```
+
+- `<select>` 대신 Tailwind Dropdown 컴포넌트로 구현
+- URL searchParams와 동기화 (`?status=active&range=week`)
+- 서버 컴포넌트에서 사용 가능하도록 Link 기반 동작
+
+**파일 2: `frontend/src/app/page.tsx`**
+- `LatestTechList` 위에 `FilterBar` 배치
+- `searchParams`에서 `status`, `range`, `sort` 읽어 `fetchTechGrouped()` 파라미터로 전달
+
+**파일 3: `frontend/src/app/category/[slug]/page.tsx`**
+- 카테고리 설명 헤더 아래 `FilterBar` 배치 (category 필터 제외, 나머지 2개만)
+
+**완료 조건**:
+- [x] 홈 피드에서 "상태: deprecated" 선택 시 deprecated 항목만 표시됨
+- [x] "기간: 이번 주" 선택 시 7일 내 항목만 표시됨
+- [x] 필터 선택이 URL에 반영되어 공유/북마크가 가능함
+- [x] "필터 초기화" 클릭 시 모든 필터 제거
+
+---
+
+### [S3] stable / experimental 상태 실제 활용 ⚠ 중간
+
+**문제**: `TechStatus` Enum에 `active`, `stable`, `deprecated`, `experimental` 4개 상태가 있지만, 크롤러(`crawler.py:177`)는 모든 항목을 무조건 `TechStatus.active`로 저장한다. `stable`과 `experimental` 상태는 DB에 단 한 건도 존재하지 않는다.
+
+**활용 기준 정의**:
+
+| 상태 | 기준 |
+|------|------|
+| `experimental` | GitHub 릴리즈 tag에 `alpha`, `beta`, `rc`, `pre`, `dev` 포함 / 제목에 "Preview", "experimental" 포함 |
+| `stable` | 주요 버전(`v1.0`, `v2.0` 등 패치가 0)이면서 `active` 상태로 3개월 이상 유지된 항목 |
+| `active` | 신규 수집 항목의 기본값 (기존 유지) |
+| `deprecated` | 기존 ReviewQueue 승인 흐름 유지 |
+
+**변경 사항**:
+
+**파일 1: `backend/app/services/crawler.py`** — `save_item_and_review()` 수정
+```python
+def _infer_status(title: str, tag: str | None) -> TechStatus:
+    """제목과 tag_name에서 초기 상태를 추론한다."""
+    combined = f"{title} {tag or ''}".lower()
+    if any(k in combined for k in ("alpha", "beta", ".rc", "-rc", "pre-", "preview", "experimental", "dev")):
+        return TechStatus.experimental
+    return TechStatus.active
+```
+
+**파일 2: `backend/app/services/scheduler.py`** (신규 배치 작업)
+- 매주 일요일 00:00 UTC에 `active` 상태이고 `major.patch == 0`이며 `created_at`이 90일 이상 된 항목을 `stable`로 자동 전환하는 배치 추가
+
+**파일 3: `frontend/src/components/StatusBadge.tsx`**
+- `experimental` 상태 배지 색상 추가 (현재 이 상태는 배지가 표시되지 않거나 잘못 표시될 수 있음)
+
+**완료 조건**:
+- [x] `anthropic-sdk-python v0.50.0-beta.1` 수집 시 `status=experimental`로 저장됨
+- [x] DB에 `experimental` 상태 항목이 실제로 존재함
+- [x] 배치 실행 후 오래된 stable 항목이 `stable`로 전환됨
+
+---
+
+### [S4] tech_released_at 자동 추출 ⚠ 중간
+
+**문제**: `TechItem.tech_released_at` 컬럼은 "기술 자체의 최초 출시일"을 저장하기 위해 설계됐으나, 크롤러(`crawler.py:165-183`)가 이 필드를 **한 번도 채우지 않는다**. 프론트엔드(`TechCard.tsx:73-76`, `tech/[id]/page.tsx:122-126`)는 이 필드가 있을 때만 출시 연도/날짜를 표시하도록 구현돼 있어 사실상 해당 UI가 전혀 노출되지 않는다.
+
+**변경 사항**:
+
+**파일 1: `backend/app/services/crawler.py`**
+
+GitHub 릴리즈 수집 시 `published_at` 필드 활용:
+```python
+# fetch_github_releases() 내부
+for release in releases:
+    published_at_str: str | None = release.get("published_at")  # "2026-01-15T12:00:00Z"
+    tech_released_at = None
+    if published_at_str:
+        try:
+            tech_released_at = datetime.fromisoformat(published_at_str.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    items.append({
+        ...,
+        "tech_released_at": tech_released_at,
+    })
+```
+
+RSS 수집 시 `entry.published_parsed` 또는 `entry.updated_parsed` 활용:
+```python
+# fetch_rss_items() 내부
+import time
+published_parsed = entry.get("published_parsed") or entry.get("updated_parsed")
+tech_released_at = None
+if published_parsed:
+    tech_released_at = datetime(*published_parsed[:6], tzinfo=timezone.utc)
+```
+
+**파일 2: `backend/app/services/crawler.py`** — `save_item_and_review()` 수정
+```python
+item = TechItem(
+    ...
+    tech_released_at=raw.get("tech_released_at"),  # 추가
+)
+```
+
+**완료 조건**:
+- [x] GitHub 릴리즈 수집 후 `tech_released_at`이 실제 릴리즈 날짜로 채워짐
+- [x] RSS 항목 수집 후 `tech_released_at`이 게시 날짜로 채워짐
+- [x] 상세 페이지(`/tech/{id}`)에서 출시일이 표시됨
+
+---
+
+### [S5] 카테고리별 개별 RSS 피드 ⬇ 낮음
+
+**문제**: 현재 Atom 피드(`/api/feed.xml`)는 모든 카테고리를 합쳐 최근 20개만 제공한다. 특정 카테고리(예: `claude_code`, `agents`)만 구독하려는 사용자는 방법이 없다.
+
+**변경 사항**:
+
+**파일: `backend/app/routers/tech.py`**
+
+기존 `/api/feed.xml` 엔드포인트를 확장하거나, 신규 경로 추가:
+```python
+@router.get("/feed/{category}.xml", response_class=Response)
+async def get_category_atom_feed(
+    category: TechCategory,
+    db: DbDep,
+) -> Response:
+    """특정 카테고리의 최근 20개 항목을 Atom 1.0 XML로 반환한다."""
+    ...
+```
+
+기존 `/api/feed.xml`도 동일 로직을 재사용하도록 리팩터링 (category=None이면 전체).
+
+**파일: `frontend/src/app/category/[slug]/page.tsx`**
+- 카테고리 설명 헤더에 해당 카테고리 RSS 구독 링크 아이콘 추가
+  ```html
+  <a href="/feed/agents.xml" title="RSS 구독">🔔</a>
+  ```
+
+**파일: `frontend/src/app/layout.tsx`**
+- 현재 전체 피드 `<link rel="alternate">` 하나만 있는데, 카테고리별로도 `<link>` 추가 (동적 생성은 각 카테고리 페이지의 `generateMetadata`에서 처리)
+
+**완료 조건**:
+- [x] `/feed/agents.xml` 요청 시 agents 카테고리 항목만 포함된 Atom 피드 반환
+- [x] `/feed/claude_code.xml` 정상 동작
+- [x] 존재하지 않는 카테고리 slug는 404 반환
+
+---
+
+### [S6] 소스별 크롤 로그 분리 기록 ⬇ 낮음
+
+**문제**: `run_crawl_with_log()`(`crawler.py:268-308`)는 전체 크롤링 결과를 **하나의 CrawlLog**로 합산해 저장한다(`source` 컬럼에 쉼표 구분 URL 전부를 문자열로 기록). Admin 크롤 로그 화면에서 "HN에서 몇 개, Anthropic에서 몇 개" 같은 소스별 수집 현황을 파악할 수 없고, 특정 소스 장애 여부도 확인 불가능하다.
+
+**변경 사항**:
+
+**파일 1: `backend/app/services/crawler.py`** — `run_crawl()` 리팩터링
+- 소스별로 수집 결과를 `dict[str, SourceResult]` 형태로 반환
+  ```python
+  @dataclass
+  class SourceResult:
+      source_url: str
+      source_name: str
+      found: int
+      added: int
+      error: str | None
+  ```
+
+**파일 2: `backend/app/services/crawler.py`** — `run_crawl_with_log()` 수정
+- `CrawlLog`를 소스별로 **N개** INSERT (현재 1개)
+
+**파일 3: `frontend/src/app/admin/page.tsx`**
+- 크롤 로그 목록에서 소스별 성공/실패를 색상으로 구분 표시
+- `error` 필드가 있는 소스는 빨간 배지로 표시
+
+**완료 조건**:
+- [x] 크롤 실행 후 소스별(`HN`, `Anthropic Blog`, `GitHub/langchain-ai/langchain` 등) CrawlLog 개별 생성
+- [x] Admin 화면에서 소스별 수집 건수와 오류 여부 확인 가능
+
+---
+
+### [S7] 중복 항목 감지 고도화 ⬇ 낮음
+
+**문제**: 현재 중복 판단 기준은 `source_url` UNIQUE 제약(`crawler.py:148-151`)이 전부다. 동일한 기술 정보가 여러 소스(예: GitHub 릴리즈 + HN 기사 + Anthropic 블로그 포스트)에서 수집되면 동일 기술이 3개 별도 항목으로 저장된다. 패치 버전 그룹화가 이 문제를 일부 완화하지만, 아예 다른 URL로 수집된 같은 내용은 여전히 중복 저장된다.
+
+**변경 사항**:
+
+**파일 1: `backend/app/services/crawler.py`** — `get_existing_urls()` 확장
+```python
+async def get_existing_titles(db: AsyncSession) -> set[str]:
+    """DB에 존재하는 title을 소문자 정규화하여 반환한다."""
+    result = await db.execute(select(func.lower(TechItem.title)))
+    return {row[0] for row in result.fetchall()}
+```
+
+**파일 2: `backend/app/services/crawler.py`** — 신규 `_is_soft_duplicate()` 함수
+```python
+def _is_soft_duplicate(title: str, existing_titles: set[str]) -> bool:
+    """제목 정규화(소문자, 특수문자 제거) 후 기존 제목과 비교한다."""
+    normalized = re.sub(r"[^a-z0-9\s]", "", title.lower()).strip()
+    return normalized in existing_titles
+```
+
+- `new_items` 필터링 시 `source_url` 중복 체크에 title 소프트 중복 체크를 추가
+- 소프트 중복 감지 시 `logger.info`로 기록하고 건너뜀 (DB에 저장 안 함)
+
+**완료 조건**:
+- [x] "LangChain v0.3" 제목이 2개 소스에서 수집될 때 1개만 저장됨
+- [x] 소프트 중복 감지 시 로그에 `[SOFT_DUP]` 접두사로 기록됨
+
+---
+
+### [S8] Deprecated 대체 기술 검색 UI 개선 ⬇ 낮음
+
+**문제**: Admin ReviewQueue에서 deprecated 승인 시 대체 기술을 지정하려면 UUID를 직접 입력해야 한다(`admin/page.tsx:29-75`). UUID를 외우거나 별도 탭에서 복사하지 않는 이상 사실상 사용 불가능한 UI다.
+
+**변경 사항**:
+
+**파일: `frontend/src/app/admin/page.tsx`**
+
+UUID 직접 입력 `<input>` → 제목 검색 + 선택 UI로 교체:
+```
+대체 기술 검색: [__________________________] 🔍
+                ↓ (검색 결과 드롭다운)
+                  LangChain v0.3.0 (integration)
+                  LangChain v0.2.9 (integration)
+                  ...
+```
+
+- `fetchTechList({ q: searchQuery, size: 5 })` 호출 (debounce 300ms)
+- 선택 시 해당 항목의 `id`(UUID)를 숨겨진 상태로 저장, 제목만 표시
+- 선택 후 "×" 버튼으로 해제 가능
+
+**완료 조건**:
+- [x] "LangChain" 입력 시 해당 기술 목록이 드롭다운으로 표시됨
+- [x] 목록에서 항목 선택 시 UUID가 자동 입력됨
+- [x] 승인 후 `deprecated_by_id`가 정상적으로 연결됨
+
+---
+
+### [S9] 다크/라이트 테마 토글 ⬇ 낮음
+
+**문제**: Tailwind CSS 설정과 컴포넌트 전반에 `dark:` 클래스가 빠짐없이 적용돼 있지만, 실제로 테마를 전환할 UI 버튼이 없다. 현재는 OS 다크 모드 설정을 따르는 `prefers-color-scheme`만 작동하는 것으로 추정되며, 사용자가 직접 토글할 수 없다.
+
+**변경 사항**:
+
+**파일 1: `frontend/src/app/layout.tsx`**
+- 헤더 우측에 테마 토글 버튼 추가
+- `next-themes` 라이브러리 사용 (`ThemeProvider` 래핑)
+
+**파일 2: `frontend/src/components/ThemeToggle.tsx`** (신규)
+```tsx
+"use client";
+import { useTheme } from "next-themes";
+export function ThemeToggle() {
+  const { theme, setTheme } = useTheme();
+  return (
+    <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+      {/* 해/달 아이콘 */}
+    </button>
+  );
+}
+```
+
+**파일 3: `frontend/package.json`**
+- `next-themes` 패키지 추가
+
+**완료 조건**:
+- [x] 헤더의 테마 토글 버튼 클릭 시 다크/라이트 전환
+- [x] 선택된 테마가 localStorage에 저장되어 새로고침 후에도 유지됨
+- [x] hydration 깜빡임 없음 (`suppressHydrationWarning` 처리)
+
+---
+
+### [S10] grouped 엔드포인트 메모리 비효율 ⬇ 낮음
+
+**문제**: `/api/tech/grouped`(`routers/tech.py:188-251`)는 해당 조건의 **전체 데이터를 메모리에 올린 후** Python 딕셔너리로 그룹화한다. 카테고리 필터 없이 전체 조회 시(`category=None`) 데이터가 수만 건이 되면 메모리 사용량이 급증하고 응답 시간이 길어진다.
+
+마찬가지로 `/api/tech/{id}/siblings`(`routers/tech.py:299-303`)도 같은 카테고리 전체를 조회한 후 Python에서 필터링한다.
+
+**변경 사항**:
+
+**파일: `backend/app/routers/tech.py`**
+
+`grouped` 엔드포인트 — 그룹 키를 SQL `REGEXP_REPLACE`로 추출하여 DB 레벨에서 집계:
+```python
+# 버전 정규표현식을 SQL로 처리
+# title에서 "base_name@major.minor" 키를 생성하는 computed column 또는 함수 인덱스 활용
+```
+
+`siblings` 엔드포인트 — `SIMILAR TO` 또는 `LIKE` 패턴으로 DB에서 직접 필터:
+```python
+# _extract_version(item.title) 결과로 LIKE 패턴 생성
+# "LangChain v0.3.%" 형태로 DB 쿼리
+if info:
+    base, major, minor, _ = info
+    pattern = f"{base} v{major}.{minor}.%"
+    query = select(TechItem).where(TechItem.title.ilike(pattern))
+```
+
+**완료 조건**:
+- [x] `siblings` 쿼리가 카테고리 전체 조회 없이 LIKE 패턴으로 실행됨 (EXPLAIN ANALYZE 확인)
+- [x] 전체 데이터 1만 건 기준 `/api/tech/grouped` 응답 시간 1초 이하
+
+---
+
+## 서비스 품질 개선 스프린트 ✅ 완료 (2026-05-27)
+
+> S1–S10 전체 구현 완료. 이하 항목은 위 갭 분석 백로그와 별도로 이번 스프린트에서 집중 처리한 사안들이다.
+
+---
+
+### [Q1] AI description 한국어 생성 ✅ (치명 버그 수정)
+
+**문제**: 크롤러가 `description` 필드에 `raw.get("content", "")[:1000]` — RSS/GitHub 릴리즈 원문(영어 Markdown) — 을 그대로 저장하고 있었다. 상세 페이지의 "상세 설명"란에 `## What's changed`, `- Added \`terminalSequence\`` 같은 영문 원본이 노출됐다.
+
+**근본 원인**: `ai_processor.py`가 `summary`만 AI로 생성하고 `description`은 정의조차 되어 있지 않았다. 크롤러가 AI 결과 대신 수집 원문을 description에 채웠다.
+
+**사이트 독자 정의** (모든 AI 처리 로직의 기준):
+> 이 사이트는 Claude Code, ChatGPT, Gemini 같은 AI 도구를 일상에서 사용하는 **한국의 일반 사용자**를 위한 서비스다.  
+> 독자의 핵심 관심사: "이게 나한테 어떤 도움이 되나? 내 AI 도구를 어떻게 더 잘 쓸 수 있나?"
+
+**변경 사항**:
+
+#### `backend/app/services/ai_processor.py`
+
+1. **`_SYSTEM_PROMPT` 보강** — 독자 정의 명시 + `description` 필드 명세 추가:
+   ```
+   이 서비스의 독자 정의:
+   - Claude Code, ChatGPT, Gemini 같은 AI 도구를 일상에서 사용하는 한국의 일반 사용자
+   - 개발자가 아닌 사람도 있으므로 쉬운 말로 설명해야 함
+   - 핵심 관심사: "이게 나한테 어떤 도움이 되나? 내 AI 도구를 어떻게 더 잘 쓸 수 있나?"
+   
+   description 작성 기준 (가장 중요):
+   - 500자 이내 한국어
+   - 독자(한국 일반 사용자) 관점에서 "이게 나한테 왜 유용한가, 어떻게 쓸 수 있나"를 설명
+   - Claude Code, ChatGPT, Gemini 등 실제 AI 도구 사용에 직접 연결되는 활용 팁 포함
+   - 기술 용어는 괄호로 쉽게 풀어서 설명 (예: "MCP(AI가 외부 도구를 쓸 수 있게 연결해주는 방법)")
+   - 영어 원문 번역이 아닌, 독자를 위한 재해석으로 작성
+   - is_relevant가 false이면 null
+   ```
+
+2. **`ProcessedItem` 데이터클래스** — `description: str | None` 필드 추가
+
+3. **`_parse_response()`** — `description=data.get("description")` 추출 추가
+
+4. **`_FAIL_ITEM`** — `description=None` 추가
+
+#### `backend/app/services/crawler.py`
+
+`save_item_and_review()` 수정:
+```python
+# Before (영어 원문 그대로 저장)
+description=raw.get("content", "")[:1000] or None,
+
+# After (AI가 생성한 한국어 활용 설명 저장)
+description=processed.description,
+```
+> `raw_content` 필드에는 원문이 그대로 보존되어, 상세 페이지 "원문 내용 보기" 접기/펼치기로 여전히 확인 가능하다.
+
+**완료 조건**:
+- [x] 신규 수집 항목의 `description`이 AI가 생성한 500자 이내 한국어로 저장됨
+- [x] `raw_content`에는 원문이 그대로 보존됨
+- [x] `_parse_response()`, `_FAIL_ITEM`, `ProcessedItem`이 `description` 필드를 모두 처리함
+
+---
+
+### [Q2] 기존 영어 description DB 일괄 정리 ✅
+
+**문제**: 버그 수정 이전에 수집된 항목 299개 중 285개의 `description`이 영어 원문이었다.
+
+**처리 방법**:
+```sql
+-- 영어 원문(Markdown 헤더, 영문자 시작, HTML 태그 등) → NULL 초기화
+UPDATE tech_items SET description = NULL
+WHERE description ~ '^[#\*\-A-Za-z]';
+
+-- HTML 태그, Markdown 헤더가 포함된 나머지도 처리
+UPDATE tech_items SET description = NULL
+WHERE description ~ '<p>|^[[:space:]]*#{1,6}[[:space:]]';
+```
+
+**결과**:
+- 영어 원문 285개 → `NULL` 처리 완료
+- 수동 입력된 한국어 description 3개 (`System Prompt Engineering`, `Vector Embeddings`, `Fine-tuning`) 보존
+- `raw_content`에는 원문이 그대로 유지되어 데이터 손실 없음
+
+**완료 조건**:
+- [x] `description ~ '^[#\*\-A-Za-z<]'` 패턴으로 영어 원문 0건 (전수 제거)
+- [x] 한국어 수동 입력 description 3건 보존
+- [x] 상세 페이지에서 더 이상 영어 원문이 "상세 설명" 섹션에 노출되지 않음
+
+---
+
+### [Q3] 서비스 기능 갭 전체 구현 (S1–S10) ✅
+
+| 항목 | 내용 | 주요 변경 파일 |
+|------|------|--------------|
+| **S1** | PostgreSQL FTS 전환 + 자동완성 | `models/tech.py`, `routers/tech.py`, `database.py`, `components/SearchBar.tsx`, `lib/api.ts` |
+| **S2** | 필터 바 (상태·기간, URL 동기화) | `components/FilterBar.tsx` (신규), `app/page.tsx`, `app/category/[slug]/page.tsx`, `routers/tech.py` |
+| **S3** | stable/experimental 상태 자동 추론 | `services/crawler.py`, `services/scheduler.py` |
+| **S4** | tech_released_at 자동 추출 | `services/crawler.py` |
+| **S5** | 카테고리별 Atom RSS 피드 | `routers/tech.py` |
+| **S6** | 소스별 크롤 로그 분리 + Admin 로그 탭 | `services/crawler.py`, `app/admin/page.tsx`, `lib/api.ts` |
+| **S7** | 소프트 중복 감지 (제목 정규화) | `services/crawler.py` |
+| **S8** | Deprecated 대체 기술 검색 UI | `app/admin/page.tsx` |
+| **S9** | 다크/라이트 테마 토글 | `components/ThemeToggle.tsx` (신규), `components/ThemeProviderWrapper.tsx` (신규), `layout.tsx`, `globals.css`, `package.json` |
+| **S10** | grouped/siblings 쿼리 효율화 | `routers/tech.py` |
+
+**FTS 구현 상세** (`database.py` 자동 초기화):
+```sql
+ALTER TABLE tech_items ADD COLUMN IF NOT EXISTS search_vector tsvector;
+CREATE INDEX IF NOT EXISTS tech_items_search_gin ON tech_items USING GIN(search_vector);
+
+CREATE OR REPLACE FUNCTION update_search_vector() RETURNS TRIGGER AS $$
+BEGIN
+  NEW.search_vector :=
+    setweight(to_tsvector('simple', COALESCE(NEW.title, '')), 'A') ||
+    setweight(to_tsvector('simple', COALESCE(NEW.summary, '')), 'B') ||
+    setweight(to_tsvector('simple', COALESCE(NEW.description, '')), 'C');
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER tsvector_update BEFORE INSERT OR UPDATE ON tech_items
+  FOR EACH ROW EXECUTE FUNCTION update_search_vector();
+```
+> `'simple'` 사전 사용: 불변화 없이 토큰화만 수행하므로 한국어 포함 다국어 텍스트에 안전하게 동작한다.
+
+**Tailwind v4 다크 모드 설정**:
+- `tailwind.config.ts`는 v4에서 사용되지 않음
+- `globals.css`에 `@custom-variant dark (&:where(.dark, .dark *));` 추가로 class 기반 다크 모드 활성화
+
+**완료 조건 (통합)**:
+- [x] 백엔드 6개 API 엔드포인트 전수 테스트 통과 (목록·검색·자동완성·그룹화·카테고리RSS·카테고리목록)
+- [x] 프론트엔드 빌드 성공 (`npm run build` — 타입 오류·컴파일 오류 0건)
+- [x] 프론트엔드 개발 서버 응답 정상 (HTTP 200)
+- [x] 영어 원문 description DB에서 완전 제거 (0건)

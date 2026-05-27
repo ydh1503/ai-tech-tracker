@@ -4,7 +4,8 @@ import { fetchTechGrouped } from "@/lib/api";
 import TechGroupCard from "@/components/TechGroupCard";
 import CategoryNav from "@/components/CategoryNav";
 import Pagination from "@/components/Pagination";
-import type { Category } from "@/lib/types";
+import FilterBar from "@/components/FilterBar";
+import type { Category, Status } from "@/lib/types";
 import { CATEGORY_LABELS, CATEGORY_META } from "@/lib/types";
 import type { Metadata } from "next";
 
@@ -23,7 +24,7 @@ const VALID_CATEGORIES: Category[] = [
 
 interface CategoryPageProps {
   params: Promise<{ slug: string }>;
-  searchParams?: Promise<{ page?: string }>;
+  searchParams?: Promise<{ page?: string; status?: string; range?: string }>;
 }
 
 export async function generateMetadata(
@@ -44,16 +45,33 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
   const { slug } = await params;
   const resolvedSearch = await searchParams;
   const page = Number(resolvedSearch?.page ?? 1);
+  const status = resolvedSearch?.status ?? "all";
+  const range = resolvedSearch?.range ?? "all";
 
   if (!VALID_CATEGORIES.includes(slug as Category)) {
     notFound();
   }
 
   const category = slug as Category;
+  const statusParam = (status && status !== "all") ? status as Status : undefined;
+
+  function rangeToCreatedAfter(r?: string): string | undefined {
+    const now = new Date();
+    if (r === "today") { now.setUTCHours(0, 0, 0, 0); return now.toISOString(); }
+    if (r === "week") { now.setDate(now.getDate() - 7); return now.toISOString(); }
+    if (r === "month") { now.setMonth(now.getMonth() - 1); return now.toISOString(); }
+    return undefined;
+  }
 
   let result;
   try {
-    result = await fetchTechGrouped({ category, size: 20, page });
+    result = await fetchTechGrouped({
+      category,
+      size: 20,
+      page,
+      status: statusParam,
+      created_after: rangeToCreatedAfter(range),
+    });
   } catch {
     result = null;
   }
@@ -94,6 +112,13 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
           </p>
         )}
       </div>
+
+      {/* 필터 바 */}
+      <FilterBar
+        basePath={`/category/${slug}`}
+        currentStatus={status}
+        currentRange={range}
+      />
 
       {/* 기술 카드 목록 */}
       {!result ? (

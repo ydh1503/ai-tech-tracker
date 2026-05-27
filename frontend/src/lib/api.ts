@@ -368,6 +368,7 @@ export interface FetchTechGroupedParams {
   page?: number;
   size?: number;
   category?: Category;
+  status?: Status;
   created_after?: string;
 }
 
@@ -378,6 +379,7 @@ export async function fetchTechGrouped(
   if (params.page !== undefined) qs.set("page", String(params.page));
   if (params.size !== undefined) qs.set("size", String(params.size));
   if (params.category) qs.set("category", params.category);
+  if (params.status) qs.set("status", params.status);
   if (params.created_after) qs.set("created_after", params.created_after);
   const query = qs.toString() ? `?${qs.toString()}` : "";
   const raw = await apiFetch<BackendPaginatedResponse<BackendTechGroupedItem>>(
@@ -410,6 +412,36 @@ export interface UpdateTechItemBody {
   status?: Status;
   official_url?: string;
   deprecated_reason?: string;
+}
+
+export interface CrawlLogItem {
+  id: string;
+  crawled_at: string;
+  source: string;
+  items_found: number;
+  items_added: number;
+  items_updated: number;
+  error: string | null;
+}
+
+export async function fetchCrawlLogs(
+  token: string,
+  page = 1,
+): Promise<PaginatedResponse<CrawlLogItem>> {
+  return apiFetch<PaginatedResponse<CrawlLogItem>>(
+    `/api/admin/crawl/logs?page=${page}&size=30`,
+    { next: { revalidate: 0 } },
+    token,
+  );
+}
+
+export async function fetchAutocomplete(q: string): Promise<string[]> {
+  if (!q.trim()) return [];
+  try {
+    return await apiFetch<string[]>(`/api/tech/autocomplete?q=${encodeURIComponent(q)}`);
+  } catch {
+    return [];
+  }
 }
 
 export async function updateTechItem(

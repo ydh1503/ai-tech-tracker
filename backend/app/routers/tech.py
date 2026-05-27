@@ -11,7 +11,7 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
-from sqlalchemy import case, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -143,28 +143,39 @@ async def search_tech_items(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ) -> PaginatedResponse[TechItemList]:
-    """기술명·요약에서 검색한다 (대소문자 무시 부분 일치)."""
-    search_term = f"%{q}%"
-    query = select(TechItem).where(
-        TechItem.title.ilike(search_term)
-        | TechItem.summary.ilike(search_term)
-        | TechItem.description.ilike(search_term)
-        | TechItem.raw_content.ilike(search_term)
-    )
+    """FTS 기반 검색 (search_vector가 없으면 ILIKE 폴백)."""
+    from sqlalchemy import func as sql_func
+
+    ts_query = sql_func.plainto_tsquery("simple", q)
+
+    # FTS 쿼리 (search_vector가 채워진 항목)
+    fts_condition = TechItem.search_vector.op("@@")(ts_query)
+    query = select(TechItem).where(fts_condition)
 
     count_query = select(func.count()).select_from(query.subquery())
     total_result = await db.execute(count_query)
     total = total_result.scalar_one()
 
-    relevance = case(
-        (TechItem.title.ilike(search_term), 0),
-        else_=1,
-    )
     offset = (page - 1) * size
-    query = query.order_by(relevance, TechItem.updated_at.desc()).offset(offset).limit(size)
+    query = query.order_by(
+        sql_func.ts_rank_cd(TechItem.search_vector, ts_query).desc(),
+        TechItem.updated_at.desc(),
+    ).offset(offset).limit(size)
 
     result = await db.execute(query)
     items = result.scalars().all()
+
+    # FTS 결과가 없으면 ILIKE 폴백
+    if total == 0:
+        search_term = f"%{q}%"
+        fallback_query = select(TechItem).where(
+            TechItem.title.ilike(search_term) | TechItem.summary.ilike(search_term)
+        )
+        fallback_count = await db.execute(select(func.count()).select_from(fallback_query.subquery()))
+        total = fallback_count.scalar_one()
+        fallback_query = fallback_query.order_by(TechItem.updated_at.desc()).offset(offset).limit(size)
+        result = await db.execute(fallback_query)
+        items = result.scalars().all()
 
     return PaginatedResponse.create(
         items=[TechItemList.model_validate(item) for item in items],
@@ -174,12 +185,28 @@ async def search_tech_items(
     )
 
 
+@router.get("/tech/autocomplete", response_model=list[str])
+async def autocomplete_tech(
+    db: DbDep,
+    q: str = Query(..., min_length=1, max_length=50, description="검색어 prefix"),
+) -> list[str]:
+    """제목 prefix 기준 최대 5개 자동완성 제안을 반환한다."""
+    result = await db.execute(
+        select(TechItem.title)
+        .where(TechItem.title.ilike(f"{q}%"))
+        .order_by(TechItem.updated_at.desc())
+        .limit(5)
+    )
+    return [row[0] for row in result.fetchall()]
+
+
 # ─── GET /api/tech/grouped ─────────────────────────────────────────────────────
 
 @router.get("/tech/grouped", response_model=PaginatedResponse[TechGroupedItem])
 async def list_grouped_tech_items(
     db: DbDep,
     category: TechCategory | None = Query(None),
+    status: TechStatus | None = Query(None, description="상태 필터"),
     created_after: datetime | None = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
@@ -188,8 +215,13 @@ async def list_grouped_tech_items(
     query = select(TechItem).order_by(TechItem.updated_at.desc())
     if category is not None:
         query = query.where(TechItem.category == category)
+    if status is not None:
+        query = query.where(TechItem.status == status)
     if created_after is not None:
         query = query.where(TechItem.created_at >= created_after)
+    # category 필터 없을 때 전체 로드 상한 설정 (메모리 보호)
+    if category is None and created_after is None:
+        query = query.limit(500)
 
     result = await db.execute(query)
     all_items = result.scalars().all()
@@ -295,12 +327,18 @@ async def get_tech_siblings(
     if not key:
         return []
 
-    # 같은 카테고리 내 전체 항목 조회 후 Python 필터링
+    # LIKE 패턴으로 DB에서 직접 필터링 (카테고리 전체 조회 불필요)
+    info = _extract_version(item.title)
+    if not info:
+        return []
+    base, major, minor, _ = info
+    # base 내 LIKE 특수문자 이스케이프
+    escaped_base = base.replace("%", r"\%").replace("_", r"\_")
+    pattern = f"{escaped_base} v{major}.{minor}.%"
     all_result = await db.execute(
-        select(TechItem).where(TechItem.category == item.category)
+        select(TechItem).where(TechItem.title.ilike(pattern))
     )
-    all_in_cat = all_result.scalars().all()
-    siblings = [s for s in all_in_cat if _group_key(s.title) == key]
+    siblings = [s for s in all_result.scalars().all() if _group_key(s.title) == key]
     siblings.sort(
         key=lambda s: (_extract_version(s.title) or (s.title, 0, 0, 0))[3],
         reverse=True,
@@ -412,72 +450,74 @@ async def get_timeline(db: DbDep) -> list[TimelineItem]:
     return timeline
 
 
+# ─── Atom XML 헬퍼 ────────────────────────────────────────────────────────────
+
+def _build_atom_xml(items: list[TechItem], feed_title: str, self_url: str, alt_url: str) -> bytes:
+    """Atom 1.0 XML 바이트를 생성한다."""
+    from datetime import timezone as _tz
+    feed = Element("feed")
+    feed.set("xmlns", "http://www.w3.org/2005/Atom")
+    SubElement(feed, "title").text = feed_title
+    SubElement(feed, "link", href=alt_url, rel="alternate")
+    SubElement(feed, "link", href=self_url, rel="self", type="application/atom+xml")
+    SubElement(feed, "id").text = self_url
+    updated_el = SubElement(feed, "updated")
+    now_utc = datetime.now(_tz.utc)
+    updated_el.text = (items[0].updated_at if items else now_utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for item in items:
+        entry = SubElement(feed, "entry")
+        SubElement(entry, "id").text = f"https://ai-tech-tracker.example.com/tech/{item.id}"
+        SubElement(entry, "title").text = item.title
+        SubElement(entry, "link", href=f"https://ai-tech-tracker.example.com/tech/{item.id}", rel="alternate")
+        SubElement(entry, "updated").text = item.updated_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+        SubElement(entry, "published").text = item.created_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+        if item.summary:
+            s = SubElement(entry, "summary"); s.set("type", "text"); s.text = item.summary
+        if item.description:
+            c = SubElement(entry, "content"); c.set("type", "text"); c.text = item.description
+        cat_val = item.category.value if hasattr(item.category, "value") else str(item.category)
+        SubElement(entry, "category", term=cat_val)
+    return tostring(feed, encoding="utf-8", xml_declaration=True)
+
+
 # ─── GET /feed.xml ─────────────────────────────────────────────────────────────
 
 @router.get("/feed.xml", response_class=Response)
 async def get_atom_feed(db: DbDep) -> Response:
     """최근 20개 항목을 Atom 1.0 XML로 반환한다."""
-    from datetime import timezone
-
     result = await db.execute(
         select(TechItem).order_by(TechItem.updated_at.desc()).limit(20)
     )
     items = result.scalars().all()
-
-    feed = Element("feed")
-    feed.set("xmlns", "http://www.w3.org/2005/Atom")
-
-    SubElement(feed, "title").text = "AI 기술 트래커"
-    SubElement(feed, "link", href="https://ai-tech-tracker.example.com", rel="alternate")
-    SubElement(
-        feed,
-        "link",
-        href="https://ai-tech-tracker.example.com/feed.xml",
-        rel="self",
-        type="application/atom+xml",
+    xml_bytes = _build_atom_xml(
+        items,
+        feed_title="AI 기술 트래커",
+        self_url="https://ai-tech-tracker.example.com/feed.xml",
+        alt_url="https://ai-tech-tracker.example.com",
     )
-    SubElement(feed, "id").text = "https://ai-tech-tracker.example.com/feed.xml"
+    return Response(content=xml_bytes, media_type="application/atom+xml; charset=utf-8")
 
-    updated_el = SubElement(feed, "updated")
-    now_utc = datetime.now(timezone.utc)
-    updated_el.text = (items[0].updated_at if items else now_utc).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
+
+# ─── GET /feed/{category}.xml ──────────────────────────────────────────────────
+
+@router.get("/feed/{category}.xml", response_class=Response)
+async def get_category_atom_feed(
+    category: TechCategory,
+    db: DbDep,
+) -> Response:
+    """특정 카테고리의 최근 20개 항목을 Atom 1.0 XML로 반환한다."""
+    result = await db.execute(
+        select(TechItem)
+        .where(TechItem.category == category)
+        .order_by(TechItem.updated_at.desc())
+        .limit(20)
     )
-
-    for item in items:
-        entry = SubElement(feed, "entry")
-        SubElement(entry, "id").text = (
-            f"https://ai-tech-tracker.example.com/tech/{item.id}"
-        )
-        SubElement(entry, "title").text = item.title
-        SubElement(
-            entry,
-            "link",
-            href=f"https://ai-tech-tracker.example.com/tech/{item.id}",
-            rel="alternate",
-        )
-        SubElement(entry, "updated").text = item.updated_at.strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-        SubElement(entry, "published").text = item.created_at.strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-        if item.summary:
-            summary_el = SubElement(entry, "summary")
-            summary_el.set("type", "text")
-            summary_el.text = item.summary
-        if item.description:
-            content_el = SubElement(entry, "content")
-            content_el.set("type", "text")
-            content_el.text = item.description
-        cat_val = (
-            item.category.value
-            if hasattr(item.category, "value")
-            else str(item.category)
-        )
-        SubElement(entry, "category", term=cat_val)
-
-    xml_bytes = tostring(feed, encoding="utf-8", xml_declaration=True)
-    return Response(
-        content=xml_bytes, media_type="application/atom+xml; charset=utf-8"
+    items = result.scalars().all()
+    cat_val = category.value
+    xml_bytes = _build_atom_xml(
+        items,
+        feed_title=f"AI 기술 트래커 — {cat_val}",
+        self_url=f"https://ai-tech-tracker.example.com/feed/{cat_val}.xml",
+        alt_url="https://ai-tech-tracker.example.com",
     )
+    return Response(content=xml_bytes, media_type="application/atom+xml; charset=utf-8")
