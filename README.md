@@ -11,21 +11,29 @@ RSS, GitHub API로 수집한 원시 정보를 Claude API가 분류·요약하고
 
 | 기능 | 상태 |
 |------|------|
-| RSS / GitHub 수집 + APScheduler (매일 18:00 UTC) | 완료 |
-| Claude Haiku AI 분류·요약·deprecated 후보 감지 | 완료 |
+| RSS / GitHub 수집 + APScheduler AsyncIO (매일 18:00 UTC) | 완료 |
+| Claude Haiku AI 분류·요약·한국어 description 생성·deprecated 후보 감지 | 완료 |
 | 프롬프트 캐싱 적용 (Anthropic ephemeral cache) | 완료 |
 | PostgreSQL CRUD (TechItem, CrawlLog, ReviewQueue) | 완료 |
-| Redis 캐시 (categories, timeline, TTL 300초) | 완료 |
-| REST API 전체 엔드포인트 | 완료 |
-| 관리자 API (Deprecated 승인/거부, 수동 추가/수정, 크롤 트리거) | 완료 |
-| Next.js 15 프론트엔드 (메인 피드, 카테고리, 상세, 검색, admin) | 완료 |
+| Redis 캐시 (categories, timeline, TTL 300초) + **크롤 후 자동 무효화** | 완료 |
+| REST API 전체 엔드포인트 (목록·상세·검색·자동완성·그룹화·RSS) | 완료 |
+| 관리자 API (Deprecated 승인/거부, 수동 추가/수정, 크롤 트리거/로그) | 완료 |
+| Next.js 15 프론트엔드 (메인 피드, 카테고리, 상세, 검색, 비교, admin) | 완료 |
 | Deprecated 배너 + 대체 기술 링크 | 완료 |
-| **Anthropic Blog / MCP 수집 소스 + `claude_code` 카테고리** | **개발 예정 (FEAT-1)** |
-| **카테고리 설명 헤더** (카테고리 진입 시 설명 표시) | **개발 예정 (FEAT-2)** |
-| **페이지네이션 UI** (URL 쿼리 파라미터 방식) | **개발 예정 (FEAT-3)** |
-| 크롤러 실행 후 캐시 무효화 | **미구현** |
+| Anthropic Blog / MCP 수집 소스 + `claude_code` 카테고리 | 완료 |
+| 카테고리 설명 헤더 (카테고리 진입 시 설명 + 예시 표시) | 완료 |
+| 페이지네이션 UI (URL 쿼리 파라미터 방식, 홈·카테고리·검색) | 완료 |
+| 고급 필터 UI (상태·기간 필터, URL 동기화) | 완료 |
+| 다크/라이트 테마 토글 (`next-themes`, localStorage 저장) | 완료 |
+| 패치 버전 그룹화 + 버전 선택 뷰어 | 완료 |
+| PostgreSQL Full-text Search (tsvector/GIN + `plainto_tsquery('simple')`) | 완료 |
+| 검색 자동완성 (debounce 300ms, 드롭다운 5개, 키보드 탐색) | 완료 |
+| Atom RSS 피드 (`/feed.xml`, `/feed/{category}.xml`) | 완료 |
+| stable/experimental 상태 자동 추론 + 매주 stable 전환 배치 | 완료 |
+| tech_released_at 자동 추출 (GitHub published_at / RSS published_parsed) | 완료 |
+| 기술 비교 페이지 (`/compare?a=ID&b=ID`) | 완료 |
+| Docker Compose 전체 스택 빌드 | 완료 |
 | Alembic DB 마이그레이션 | **미적용** (현재 auto create) |
-| Full-text search (현재 LIKE) | **미구현** |
 
 ---
 
@@ -34,12 +42,13 @@ RSS, GitHub API로 수집한 원시 정보를 Claude API가 분류·요약하고
 | 분류 | 기술 |
 |------|------|
 | 백엔드 | Python 3.12+ / FastAPI |
-| 크롤링 | feedparser, httpx, APScheduler |
-| AI 처리 | Anthropic Python SDK (claude-haiku-4-5-20251001) |
-| DB | PostgreSQL (asyncpg + SQLAlchemy 2.0) |
-| 캐시 | Redis |
+| 크롤링 | feedparser, httpx, APScheduler (AsyncIOScheduler) |
+| AI 처리 | claude-haiku-4-5-20251001 (프롬프트 캐싱, 한국어 description 생성) |
+| DB | PostgreSQL 17 (asyncpg + SQLAlchemy 2.0, FTS: tsvector/GIN/plainto_tsquery) |
+| 캐시 | Redis 7 |
 | 프론트엔드 | Next.js 15 (App Router, TypeScript strict) |
 | 스타일링 | Tailwind CSS v4 |
+| 컨테이너 | Docker / Docker Compose |
 | 배포 — 백엔드 | Railway |
 | 배포 — 프론트엔드 | Vercel |
 
@@ -49,13 +58,35 @@ RSS, GitHub API로 수집한 원시 정보를 Claude API가 분류·요약하고
 
 ### 사전 요구사항
 
-- Python 3.12+
-- Node.js 20+
-- PostgreSQL 16+
-- Redis 7+
+**Docker 사용 (권장)**
+- Docker Desktop (PostgreSQL·Redis·백엔드·프론트엔드 포함)
 - Anthropic API 키 (console.anthropic.com에서 발급)
 
-### 백엔드
+**로컬 직접 실행**
+- Python 3.12+
+- Node.js 20+
+- PostgreSQL 17+
+- Redis 7+
+- Anthropic API 키
+
+### Docker Compose (권장)
+
+```bash
+# 루트 .env 파일 생성 (backend/.env.example 참고)
+cp backend/.env.example .env
+# .env에서 ANTHROPIC_API_KEY, ADMIN_TOKEN 설정
+
+# 전체 스택 빌드 및 기동 (postgres, redis, backend, frontend)
+docker compose up -d --build
+
+# 중지
+docker compose down
+```
+
+- 프론트엔드: http://localhost:3000
+- 백엔드 API 문서: http://localhost:8000/docs
+
+### 백엔드 (로컬 직접 실행)
 
 ```bash
 cd backend
@@ -71,11 +102,11 @@ cp .env.example .env
 uvicorn app.main:app --reload --port 8000
 ```
 
-서버 기동 시 `create_tables()`가 자동으로 테이블을 생성한다. Alembic 마이그레이션은 별도 필요 없음.
+서버 기동 시 `create_tables()`가 자동으로 테이블(FTS 인덱스·트리거 포함)을 생성한다.
 
 API 문서: http://localhost:8000/docs
 
-### 프론트엔드
+### 프론트엔드 (로컬 직접 실행)
 
 ```bash
 cd frontend
@@ -115,24 +146,32 @@ ai-tech-tracker/
 │   ├── .env.example
 │   └── Dockerfile
 ├── frontend/
+│   ├── Dockerfile                  — multi-stage 빌드 (standalone 출력)
 │   └── src/
 │       ├── app/                    — Next.js App Router 페이지
-│       │   ├── page.tsx            — 메인 피드
-│       │   ├── category/[slug]/    — 카테고리별 목록
-│       │   ├── tech/[id]/          — 기술 상세
+│       │   ├── page.tsx            — 메인 피드 (패치 그룹화, 필터 바)
+│       │   ├── category/[slug]/    — 카테고리별 목록 (설명 헤더)
+│       │   ├── tech/[id]/          — 기술 상세 (raw_content 접기, siblings)
 │       │   ├── deprecated/         — deprecated 목록
-│       │   ├── search/             — 검색 결과
+│       │   ├── search/             — 검색 결과 (FTS 기반)
+│       │   ├── compare/            — 기술 비교 (/compare?a=ID&b=ID)
 │       │   └── admin/              — 관리자 ("use client")
 │       ├── components/
 │       │   ├── TechCard.tsx
+│       │   ├── TechGroupCard.tsx   — 패치 버전 그룹 카드
+│       │   ├── PatchVersionViewer.tsx — 버전 선택기 (클라이언트)
 │       │   ├── StatusBadge.tsx
 │       │   ├── DeprecatedBanner.tsx
-│       │   ├── SearchBar.tsx
-│       │   ├── CategoryNav.tsx
-│       │   └── Timeline.tsx
+│       │   ├── SearchBar.tsx       — 자동완성 포함 ("use client")
+│       │   ├── CategoryNav.tsx     — deprecated 배지 포함
+│       │   ├── FilterBar.tsx       — 상태·기간 필터 ("use client")
+│       │   ├── Pagination.tsx      — 페이지네이션 UI
+│       │   ├── Timeline.tsx
+│       │   ├── ThemeToggle.tsx     — 다크/라이트 전환 ("use client")
+│       │   └── ThemeProviderWrapper.tsx — next-themes Provider
 │       └── lib/
-│           ├── api.ts              — fetch 래퍼 (apiFetch)
-│           └── types.ts            — TechItem, Category, Status 타입
+│           ├── api.ts              — fetch 래퍼 (SSR/CSR URL 분기)
+│           └── types.ts            — TechItem, Category, Status 타입 + CATEGORY_META
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── DEVELOPMENT.md

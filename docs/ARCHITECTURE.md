@@ -76,20 +76,26 @@ app/
 ```
 src/
 ├── app/           — Next.js App Router (서버 컴포넌트 기본)
-│   ├── layout.tsx         — 공통 헤더/푸터
-│   ├── page.tsx           — / 메인 피드
-│   ├── category/[slug]/   — /category/:slug
-│   ├── tech/[id]/         — /tech/:id 상세
+│   ├── layout.tsx         — 공통 헤더/푸터 (ThemeProvider, Atom 피드 링크)
+│   ├── page.tsx           — / 메인 피드 (패치 그룹화, FilterBar)
+│   ├── category/[slug]/   — /category/:slug (설명 헤더 + FilterBar)
+│   ├── tech/[id]/         — /tech/:id 상세 (raw_content 접기, siblings)
 │   ├── deprecated/        — /deprecated
-│   ├── search/            — /search?q=
+│   ├── search/            — /search?q= (FTS 기반)
+│   ├── compare/           — /compare?a=ID&b=ID 기술 비교
 │   └── admin/             — /admin ("use client")
-├── components/    — TechCard, StatusBadge, DeprecatedBanner, SearchBar, CategoryNav, Timeline
+├── components/
+│   ├── TechCard, TechGroupCard, PatchVersionViewer  — 카드 계열
+│   ├── StatusBadge, DeprecatedBanner                — 상태 표시
+│   ├── SearchBar (자동완성), FilterBar, Pagination   — 탐색 UI
+│   ├── CategoryNav (deprecated 배지 포함), Timeline  — 내비게이션
+│   └── ThemeToggle, ThemeProviderWrapper            — 테마 토글
 └── lib/
-    ├── api.ts     — apiFetch 래퍼 + 정규화 함수 (normalizeTechItem 등)
-    └── types.ts   — TechItem, Category, Status, CategoryCount 인터페이스
+    ├── api.ts     — apiFetch 래퍼 (SSR/CSR URL 분기) + 정규화 함수
+    └── types.ts   — TechItem, Category, Status, CategoryCount, CATEGORY_META
 ```
 
-**클라이언트 컴포넌트**: `SearchBar.tsx`, `admin/page.tsx` 두 파일만 `"use client"` 선언.
+**클라이언트 컴포넌트** (`"use client"` 선언): `SearchBar.tsx`, `FilterBar.tsx`, `ThemeToggle.tsx`, `ThemeProviderWrapper.tsx`, `PatchVersionViewer.tsx`, `admin/page.tsx`.
 
 ---
 
@@ -98,17 +104,24 @@ src/
 ### 크롤링 파이프라인 (매일 18:00 UTC)
 
 ```
-1. APScheduler → _run_crawl_sync() → asyncio.run(run_crawl_with_log())
-2. RSS 수집: feedparser로 각 소스 파싱
-3. GitHub 수집: /repos/{owner}/{repo}/releases?per_page=5 (GITHUB_TOKEN 있으면 rate limit 완화)
-4. source_url 기준 중복 필터링 (DB UNIQUE 제약)
-5. 신규 항목 Claude API 전송 (BATCH_SIZE=10 병렬 처리, 프롬프트 캐싱 적용)
+1. AsyncIOScheduler → run_crawl_with_log() (직접 코루틴 스케줄링)
+2. RSS 수집: feedparser.parse()를 run_in_executor()로 비동기 래핑 (이벤트 루프 블로킹 방지)
+   → 6개 소스: Hacker News, O'Reilly Radar, GitHub Blog, Anthropic Blog, OpenAI Blog, Google Developers Blog
+   → RSS entry에서 tech_released_at(published_parsed) 추출
+3. GitHub 수집: /repos/{owner}/{repo}/releases?per_page=10 (9개 레포)
+   → 403/429 시 지수 백오프(1→2→4초) 재시도 최대 3회
+   → published_at → tech_released_at 변환
+4. source_url UNIQUE 중복 필터링 + 제목 소프트 중복 감지(_is_soft_duplicate)
+5. 신규 항목 Claude Haiku API 전송 (BATCH_SIZE=10 병렬, 프롬프트 캐싱 적용)
    → is_relevant=false 항목 버림
-   → is_relevant=true 항목: category, summary, is_deprecated_candidate 추출
-6. TechItem INSERT (status=active)
+   → is_relevant=true 항목: category, summary, description(한국어 500자), is_deprecated_candidate 추출
+6. TechItem INSERT
+   → status = _infer_status(title, tag): alpha/beta/rc/pre/preview/experimental/-dev/.dev → experimental
+   → description = AI 생성 한국어 활용 설명 (영어 원문은 raw_content에 보존)
+   → tech_released_at = 기술 자체 출시일
    → is_deprecated_candidate=true이면 ReviewQueue INSERT
-7. CrawlLog 기록
-※ 주의: 이 시점에 Redis 캐시(categories, timeline) 무효화 없음 [이슈 #1]
+7. CrawlLog 기록 (소스별 SourceResult 집계)
+8. Redis 캐시 무효화: cache_delete("categories"), cache_delete("timeline")
 ```
 
 ### 사용자 요청 흐름 (기술 상세 페이지)
@@ -149,10 +162,15 @@ src/
 |--------|------|------|------|
 | `GET` | `/api/tech` | 목록 (페이지네이션, category/status/created_after 필터) | 없음 |
 | `GET` | `/api/tech/deprecated` | deprecated 목록 (대체 기술 포함) | 없음 |
-| `GET` | `/api/tech/search` | 검색 (`?q=`) | 없음 |
+| `GET` | `/api/tech/search` | FTS 검색 (`?q=`, ILIKE 폴백) | 없음 |
+| `GET` | `/api/tech/autocomplete` | 제목 prefix 자동완성 (최대 5개) | 없음 |
+| `GET` | `/api/tech/grouped` | 패치 버전 그룹화 목록 | 없음 |
 | `GET` | `/api/tech/{id}` | 상세 | 없음 |
+| `GET` | `/api/tech/{id}/siblings` | 같은 major.minor 패치 버전 목록 | 없음 |
 | `GET` | `/api/categories` | 카테고리별 항목 수 (Redis 캐시) | 없음 |
 | `GET` | `/api/feed/timeline` | 최근 업데이트 50개 (Redis 캐시) | 없음 |
+| `GET` | `/api/feed.xml` | 전체 Atom 1.0 RSS 피드 (최근 20개) | 없음 |
+| `GET` | `/api/feed/{category}.xml` | 카테고리별 Atom RSS 피드 | 없음 |
 | `GET` | `/api/admin/queue` | deprecated 검토 큐 | Bearer |
 | `POST` | `/api/admin/queue/{id}/approve` | deprecated 승인 | Bearer |
 | `POST` | `/api/admin/queue/{id}/reject` | deprecated 거부 | Bearer |
@@ -180,9 +198,9 @@ TechItem (1) ──── (N) ReviewQueue
 |------|------|------|
 | `id` | UUID PK | |
 | `title` | VARCHAR(500) | 기술명, INDEX |
-| `description` | TEXT | 상세 설명 |
+| `description` | TEXT | AI 생성 한국어 활용 설명 (500자 이내, 독자 관점 재해석) |
 | `summary` | VARCHAR(500) | AI 생성 한국어 한 줄 요약 |
-| `category` | ENUM | skills/harness/agents/orchestration/integration/prompting/infra, INDEX |
+| `category` | ENUM | skills/harness/agents/orchestration/integration/prompting/infra/claude_code, INDEX |
 | `status` | ENUM | active/stable/deprecated/experimental, INDEX |
 | `official_url` | VARCHAR(2048) | 공식 문서 링크 |
 | `source_url` | VARCHAR(2048) UNIQUE | 원본 출처 (중복 감지 기준), INDEX |
@@ -190,7 +208,8 @@ TechItem (1) ──── (N) ReviewQueue
 | `deprecated_by` | UUID FK → tech_items.id | 대체 기술 (자기참조, SET NULL) |
 | `deprecated_reason` | TEXT | 대체 이유 |
 | `deprecated_at` | TIMESTAMPTZ | 지원 종료 일시 |
-| `tech_released_at` | TIMESTAMPTZ | 기술 자체 출시일 (등록일과 별개) |
+| `tech_released_at` | TIMESTAMPTZ | 기술 자체 출시일 (RSS/GitHub published_at에서 추출) |
+| `search_vector` | TSVECTOR | FTS 인덱스용 (`simple` 사전, GIN 인덱스, 트리거 자동 갱신) |
 | `created_at` | TIMESTAMPTZ | DB 등록일 |
 | `updated_at` | TIMESTAMPTZ | 마지막 수정일 |
 
@@ -248,8 +267,8 @@ ReviewQueue INSERT (reviewed=false, approved=null)
 
 | 캐시 키 | TTL | 무효화 시점 |
 |---------|-----|-----------|
-| `categories` | 300초 | **현재 없음** — 크롤러 실행 후 수동 만료 대기 [이슈 #1] |
-| `timeline` | 300초 | **현재 없음** — 동일 [이슈 #1] |
+| `categories` | 300초 | `run_crawl_with_log()` 완료 후 `cache_delete("categories")` 자동 호출 |
+| `timeline` | 300초 | `run_crawl_with_log()` 완료 후 `cache_delete("timeline")` 자동 호출 |
 
 Redis 연결 실패 시 캐시를 우회하고 DB에서 직접 조회한다 (graceful degradation).
 
@@ -269,8 +288,8 @@ Redis 연결 실패 시 캐시를 우회하고 DB에서 직접 조회한다 (gra
 
 | 한계 | 현재 방식 | 확장 방향 |
 |------|---------|---------|
-| 검색 성능 | PostgreSQL LIKE | `tsvector` + GIN 인덱스 또는 pgvector |
-| 캐시 무효화 | 없음 (TTL 만료 대기) | 크롤러 완료 후 `cache_delete()` 호출 |
+| 검색 성능 | FTS(`simple` 사전) — 한국어 형태소 분리 없음 | `pg_trgm` 또는 별도 한국어 검색엔진 (Elasticsearch 등) |
 | DB 마이그레이션 | SQLAlchemy auto create | Alembic 마이그레이션 도입 |
 | 크롤러 확장성 | 단일 프로세스 순차 실행 | Celery + Redis Queue 병렬화 |
 | 관리자 인증 | 단순 토큰 비교 | JWT + 만료 시간 |
+| grouped 쿼리 | 전체 데이터 메모리 로드 후 Python 그룹화 (상한 500건) | SQL REGEXP_REPLACE로 DB 레벨 집계 |

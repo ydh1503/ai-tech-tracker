@@ -7,10 +7,11 @@
 | 도구 | 버전 | 용도 |
 |------|------|------|
 | Python | 3.12+ | 백엔드, 크롤러, AI 처리 |
-| Node.js | 20+ | 프론트엔드 |
+| Node.js | 22+ | 프론트엔드 (Docker: node:22-alpine) |
 | npm | 10+ | 패키지 관리 |
-| PostgreSQL | 16+ | 주 데이터베이스 |
-| Redis | 7+ | 캐시 |
+| PostgreSQL | 17+ | 주 데이터베이스 (Docker: postgres:17-alpine) |
+| Redis | 7+ | 캐시 (Docker: redis:7-alpine) |
+| Docker Desktop | 4+ | 전체 스택 컨테이너 실행 |
 | Git | 2.40+ | 버전 관리 |
 
 ---
@@ -24,7 +25,28 @@ git clone https://github.com/<your-username>/ai-tech-tracker.git
 cd ai-tech-tracker
 ```
 
-### 2. 백엔드 세팅
+### 2. Docker Compose (권장)
+
+```bash
+# 루트 .env 파일 생성
+cp backend/.env.example .env
+# .env에서 ANTHROPIC_API_KEY, ADMIN_TOKEN 설정 (필수)
+
+# 전체 스택 빌드 (postgres:17-alpine + redis:7-alpine + backend + frontend)
+docker compose up -d --build
+
+# 로그 확인
+docker compose logs -f backend
+docker compose logs -f frontend
+
+# 중지
+docker compose down
+```
+
+> SSR/CSR URL 분기: 컨테이너 내부에서 백엔드 호출은 `BACKEND_URL=http://backend:8000`,
+> 브라우저 클라이언트는 `NEXT_PUBLIC_API_URL=http://localhost:8000` 사용.
+
+### 3. 백엔드 세팅
 
 ```bash
 cd backend
@@ -241,7 +263,15 @@ createdb ai_tech_tracker
 
 ### Tailwind CSS 클래스가 적용되지 않을 때
 
-`tailwind.config.ts`의 `content` 경로 확인 후 개발 서버 재시작.
+Tailwind CSS v4는 `tailwind.config.ts`를 사용하지 않는다.
+다크 모드가 적용되지 않으면 `src/styles/globals.css` 상단의 아래 설정을 확인:
+
+```css
+@custom-variant dark (&:where(.dark, .dark *));
+```
+
+`next-themes`가 `<html>` 태그에 `.dark` 클래스를 추가하므로 이 설정이 없으면 다크 모드 클래스가 무시된다.
+개발 서버 재시작 후에도 적용 안 되면 `.next/` 캐시 삭제 후 재시작.
 
 ### TypeScript `Type 'any' is not assignable` 오류
 
@@ -249,13 +279,12 @@ createdb ai_tech_tracker
 
 ### 크롤링 후 카테고리/타임라인이 즉시 갱신되지 않을 때
 
-Redis 캐시 TTL(300초)이 만료될 때까지 기다리거나 Redis에서 직접 삭제:
+크롤러 완료 시 `cache_delete("categories")`, `cache_delete("timeline")`이 자동 호출된다.
+수동으로 삭제해야 할 경우:
 
 ```bash
 redis-cli DEL categories timeline
 ```
-
-캐시 무효화 자동화 방법은 [백로그 P1-2](../REQUIREMENTS.md)를 참고하세요.
 
 ### admin API에서 변경사항이 반영되지 않을 때
 

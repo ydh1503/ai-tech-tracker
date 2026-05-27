@@ -57,20 +57,20 @@
 
 ## 알려진 이슈
 
-> 2026-05-27 Opus 평가 에이전트 검토 결과를 반영하여 갱신.
+> 2026-05-27 갱신. ✅ = 해결 완료.
 
-| # | 이슈 | 영향도 | 위치 |
-|---|------|--------|------|
-| 1 | **스케줄러 비동기 충돌** — `BackgroundScheduler`(동기) + `asyncio.run()` 패턴이 FastAPI 메인 이벤트 루프와 충돌하여 예약 크롤링이 실제로 실행되지 않을 가능성 높음. 수집 데이터가 5/26 하루치뿐인 정황 근거. | **치명** | `services/scheduler.py:21,34` |
-| 2 | **AI 분류 일관성 없음** — 동일 SDK(`anthropic-sdk-python`)의 연속 릴리즈가 `harness`, `orchestration`, `integration`, `harness` 4개 카테고리로 흩어짐. OpenAI Codex 글이 `claude_code`로 오분류. | **높음** | `services/ai_processor.py` 시스템 프롬프트 |
-| 3 | **크롤러 실행 후 Redis 캐시 무효화 없음** — 신규 항목 추가·admin 수정 후 최대 5분간 구버전 데이터 반환 | 중간 | `services/crawler.py` 끝, `routers/admin.py` |
-| 4 | **GitHub RSS 동기 블로킹** — `feedparser.parse()`가 async 함수 내 동기 호출로 6개 피드 순차 실행 중 이벤트 루프 블로킹 | 중간 | `services/crawler.py:64` |
-| 5 | **GitHub rate limit 미처리** — 403 오류를 `logger.error`로만 처리, 재시도·백오프 없음. 토큰 없이 9개 레포 호출 시 60req/h 한도 초과 가능 | 중간 | `services/crawler.py:122` |
-| 6 | **홈/타임라인 중복 노출** — 메인 피드의 `LatestTechList`(최근 20개)와 `RecentTimeline`(최근 15개) 모두 `updated_at` 역순으로 같은 데이터를 두 번 표시 | 낮음 | `app/page.tsx:80,238` |
-| 7 | **Alembic 마이그레이션 미적용** — 스키마 변경 시 수동 ALTER TABLE 필요. 운영 환경 위험 | 높음 | `database.py` |
-| 8 | **검색 관련도 정렬 없음** — `ILIKE` 부분일치 + `updated_at` 역순. `raw_content`/`description` 본문 검색 제외 | 낮음 | `routers/tech.py:114-124` |
-| 9 | **stable/experimental 상태 미사용** — 크롤러가 항상 `active`만 저장. `TechStatus` 4개 상태 중 2개 잉여 | 낮음 | `services/crawler.py:161`, `models/tech.py:28-32` |
-| 10 | `CategoryCount` 타입이 `count`만 노출 — `active_count`, `deprecated_count` 미사용 | 낮음 | `frontend/src/lib/types.ts` |
+| # | 이슈 | 영향도 | 위치 | 상태 |
+|---|------|--------|------|------|
+| 1 | **스케줄러 비동기 충돌** — `BackgroundScheduler`(동기) + `asyncio.run()` 패턴이 FastAPI 이벤트 루프와 충돌. | **치명** | `services/scheduler.py` | ✅ `AsyncIOScheduler`로 교체 완료 |
+| 2 | **AI 분류 일관성 없음** — 동일 SDK 연속 릴리즈가 4개 카테고리로 흩어짐. OpenAI 항목이 `claude_code`로 오분류. | **높음** | `services/ai_processor.py` 시스템 프롬프트 | ✅ SDK 규칙 명시 + few-shot 예시 추가 완료 |
+| 3 | **크롤러 실행 후 Redis 캐시 무효화 없음** — 신규 항목 추가 후 최대 5분간 구버전 데이터 반환 | 중간 | `services/crawler.py`, `cache.py` | ✅ `cache_delete()` 구현 + 크롤 완료 후 자동 호출 |
+| 4 | **GitHub RSS 동기 블로킹** — `feedparser.parse()`가 async 함수 내 동기 호출로 이벤트 루프 블로킹 | 중간 | `services/crawler.py` | ✅ `run_in_executor()` 래핑 완료 |
+| 5 | **GitHub rate limit 미처리** — 403 오류를 `logger.error`로만 처리, 재시도 없음 | 중간 | `services/crawler.py` | ✅ 지수 백오프(1→2→4초) 재시도 3회 구현 완료 |
+| 6 | **홈/타임라인 중복 노출** — 메인 피드 `LatestTechList`와 `RecentTimeline`이 같은 데이터를 두 번 표시 | 낮음 | `app/page.tsx` | 미해결 |
+| 7 | **Alembic 마이그레이션 미적용** — 스키마 변경 시 수동 ALTER TABLE 필요 | 높음 | `database.py` | 미해결 |
+| 8 | **검색 한국어 형태소 분리 없음** — `simple` 사전은 토큰화만 수행. "MCP 서버" 검색 시 "MCP server" 항목 부분 누락 가능 | 낮음 | `routers/tech.py`, `database.py` | 미해결 (pg_trgm 또는 전용 검색엔진 필요) |
+| 9 | **stable/experimental 상태 미사용** — 크롤러가 항상 `active`만 저장 | 낮음 | `services/crawler.py` | ✅ `_infer_status()` + 매주 `promote_stable_items()` 구현 완료 |
+| 10 | `CategoryCount` 타입이 `count`만 노출 — `active_count`, `deprecated_count` 미사용 | 낮음 | `frontend/src/lib/types.ts` | ✅ 두 필드 추가 + `CategoryNav` 배지 표시 완료 |
 
 ---
 
@@ -460,8 +460,8 @@ scheduler.add_job(run_crawl_with_log, "cron", hour=18)
 - `asyncio.run()` 호출 완전 제거
 
 **완료 조건**:
-- [ ] 서버 재시작 후 다음 크롤 주기에 자동 실행됨을 로그로 확인
-- [ ] 기존 `cron hour=18` 설정 유지
+- [x] 서버 재시작 후 다음 크롤 주기에 자동 실행됨을 로그로 확인
+- [x] 기존 `cron hour=18` 설정 유지
 
 ---
 
@@ -497,8 +497,8 @@ scheduler.add_job(run_crawl_with_log, "cron", hour=18)
    ```
 
 **완료 조건**:
-- [ ] 동일 저장소 연속 릴리즈 3개가 같은 카테고리로 분류됨
-- [ ] OpenAI/Google 관련 항목이 `claude_code`로 분류되지 않음
+- [x] 동일 저장소 연속 릴리즈 3개가 같은 카테고리로 분류됨
+- [x] OpenAI/Google 관련 항목이 `claude_code`로 분류되지 않음
 
 ---
 
@@ -520,7 +520,7 @@ feed = await loop.run_in_executor(None, feedparser.parse, source["url"])
 ```
 
 **완료 조건**:
-- [ ] `run_in_executor` 래핑 후 동시 RSS 수집 시 이벤트 루프 블로킹 없음
+- [x] `run_in_executor` 래핑 후 동시 RSS 수집 시 이벤트 루프 블로킹 없음
 
 ---
 
@@ -536,8 +536,8 @@ feed = await loop.run_in_executor(None, feedparser.parse, source["url"])
 - `GITHUB_TOKEN` 미설정 경고를 startup 로그에 추가
 
 **완료 조건**:
-- [ ] 403 응답 시 재시도 로그 확인
-- [ ] 레이트 리밋 소진 시 대기 후 재개
+- [x] 403 응답 시 재시도 로그 확인
+- [x] 레이트 리밋 소진 시 지수 백오프 후 재개
 
 ---
 
@@ -553,7 +553,7 @@ feed = await loop.run_in_executor(None, feedparser.parse, source["url"])
 - Admin 항목 수정/삭제 엔드포인트에서도 캐시 무효화
 
 **완료 조건**:
-- [ ] 크롤 직후 `/api/categories` 요청 시 신규 카테고리 즉시 반영
+- [x] 크롤 직후 `/api/categories` 요청 시 신규 카테고리 즉시 반영
 
 ---
 
@@ -663,39 +663,39 @@ query = select(TechItem).where(
 **파일 1: `backend/app/models/tech.py`**
 - `TechItem`에 `search_vector: Mapped[str | None]` 컬럼 추가 (`TSVECTOR` 타입)
 
-**파일 2: Alembic 마이그레이션**
+**파일 2: `backend/app/database.py`** — `create_tables()` 내 자동 초기화 (Alembic 미적용)
 ```sql
-ALTER TABLE tech_items ADD COLUMN search_vector TSVECTOR;
-CREATE INDEX tech_items_search_gin ON tech_items USING GIN(search_vector);
+-- 'simple' 사전 사용: 불변화 없이 토큰화만 수행 → 한국어 포함 다국어 텍스트에 안전
+ALTER TABLE tech_items ADD COLUMN IF NOT EXISTS search_vector TSVECTOR;
+CREATE INDEX IF NOT EXISTS tech_items_search_gin ON tech_items USING GIN(search_vector);
 
 CREATE OR REPLACE FUNCTION update_search_vector() RETURNS TRIGGER AS $$
 BEGIN
   NEW.search_vector :=
-    setweight(to_tsvector('english', COALESCE(NEW.title, '')), 'A') ||
-    setweight(to_tsvector('english', COALESCE(NEW.summary, '')), 'B') ||
-    setweight(to_tsvector('english', COALESCE(NEW.description, '')), 'C');
+    setweight(to_tsvector('simple', COALESCE(NEW.title, '')), 'A') ||
+    setweight(to_tsvector('simple', COALESCE(NEW.summary, '')), 'B') ||
+    setweight(to_tsvector('simple', COALESCE(NEW.description, '')), 'C');
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER tsvector_update
+-- CREATE OR REPLACE TRIGGER (PostgreSQL 14+): 원자적 교체, DROP+CREATE 경쟁 창 없음
+CREATE OR REPLACE TRIGGER tsvector_update
   BEFORE INSERT OR UPDATE ON tech_items
   FOR EACH ROW EXECUTE FUNCTION update_search_vector();
 ```
 
 **파일 3: `backend/app/routers/tech.py`** — `search_tech_items()` 수정
 ```python
-# ILIKE 제거, to_tsquery 방식으로 전환
-from sqlalchemy import func, cast
-from sqlalchemy.dialects.postgresql import TSVECTOR, TSQUERY
-
-ts_query = func.plainto_tsquery("english", q)
+# FTS 기반 검색 (search_vector가 없는 경우 ILIKE 폴백)
+ts_query = func.plainto_tsquery("simple", q)  # 'simple' 사전 사용
 query = select(TechItem).where(
     TechItem.search_vector.op("@@")(ts_query)
 )
 # 랭킹 정렬
 query = query.order_by(
-    func.ts_rank_cd(TechItem.search_vector, ts_query).desc()
+    func.ts_rank_cd(TechItem.search_vector, ts_query).desc(),
+    TechItem.updated_at.desc(),
 )
 ```
 
@@ -782,7 +782,9 @@ interface FilterBarProps {
 def _infer_status(title: str, tag: str | None) -> TechStatus:
     """제목과 tag_name에서 초기 상태를 추론한다."""
     combined = f"{title} {tag or ''}".lower()
-    if any(k in combined for k in ("alpha", "beta", ".rc", "-rc", "pre-", "preview", "experimental", "dev")):
+    # "dev" 단독 매칭 제외: "developer"/"development"/"devtools" 오탐 방지
+    # 릴리즈 태그에 실제로 쓰이는 "-dev" / ".dev" 형태로만 검사
+    if any(k in combined for k in ("alpha", "beta", ".rc", "-rc", "pre-", "preview", "experimental", "-dev", ".dev")):
         return TechStatus.experimental
     return TechStatus.active
 ```
@@ -1161,10 +1163,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER tsvector_update BEFORE INSERT OR UPDATE ON tech_items
+-- CREATE OR REPLACE TRIGGER (PostgreSQL 14+): 원자적 교체로 경쟁 창 없음
+CREATE OR REPLACE TRIGGER tsvector_update BEFORE INSERT OR UPDATE ON tech_items
   FOR EACH ROW EXECUTE FUNCTION update_search_vector();
 ```
 > `'simple'` 사전 사용: 불변화 없이 토큰화만 수행하므로 한국어 포함 다국어 텍스트에 안전하게 동작한다.
+> `CREATE OR REPLACE TRIGGER` (PostgreSQL 14+): DROP+CREATE 방식의 짧은 경쟁 창을 없애 동시 INSERT 시 `search_vector = NULL` 저장 방지.
 
 **Tailwind v4 다크 모드 설정**:
 - `tailwind.config.ts`는 v4에서 사용되지 않음
