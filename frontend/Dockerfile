@@ -16,6 +16,8 @@ ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
 RUN npm run build
+# public 디렉토리가 없을 경우 빈 디렉토리 생성 (COPY 에러 방지)
+RUN mkdir -p /app/public
 
 # ── Stage 3: 실행 (standalone 최소 이미지) ────────────────────────────────────
 FROM node:22-alpine AS runner
