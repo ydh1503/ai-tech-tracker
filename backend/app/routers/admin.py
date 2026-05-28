@@ -362,3 +362,66 @@ async def trigger_crawl() -> dict[str, str]:
     # 논블로킹으로 실행
     asyncio.create_task(run_crawl_with_log())
     return {"message": "크롤링이 백그라운드에서 시작되었습니다."}
+
+
+# ─── POST /api/admin/tech/reprocess-descriptions ───────────────────────────────
+
+@router.post(
+    "/tech/reprocess-descriptions",
+    dependencies=[AdminAuth],
+)
+async def reprocess_descriptions(
+    db: DbDep,
+    limit: int = Query(50, ge=1, le=200, description="1회 처리 항목 수"),
+) -> dict[str, int | str]:
+    """description이 NULL인 항목을 AI로 재처리하여 한국어 설명을 생성한다.
+
+    is_relevant 판단 없이 description만 전용으로 생성하는 프롬프트를 사용한다.
+    raw_content가 없는 항목은 title만으로 description을 생성한다.
+    """
+    import asyncio
+    import httpx
+    from app.services.ai_processor import generate_description, _build_headers
+    from app.config import settings
+
+    # description=NULL인 항목 선택 (raw_content 유무 무관하게 title로도 생성 가능)
+    result = await db.execute(
+        select(TechItem)
+        .where(TechItem.description.is_(None))
+        .order_by(TechItem.updated_at.desc())
+        .limit(limit)
+    )
+    items = result.scalars().all()
+
+    if not items:
+        return {"processed": 0, "updated": 0, "message": "재처리할 항목이 없습니다."}
+
+    # AI 배치 처리 (description 전용 프롬프트)
+    headers = _build_headers(settings.ANTHROPIC_API_KEY)
+    updated = 0
+
+    async with httpx.AsyncClient(timeout=600) as client:
+        for batch_start in range(0, len(items), 10):
+            batch = items[batch_start:batch_start + 10]
+            results = await asyncio.gather(
+                *[
+                    generate_description(
+                        title=str(item.title),
+                        content=str(item.raw_content or ""),
+                        client=client,
+                        headers=headers,
+                    )
+                    for item in batch
+                ]
+            )
+            for item, desc in zip(batch, results):
+                if desc:
+                    item.description = desc
+                    updated += 1
+
+    await db.flush()
+    return {
+        "processed": len(items),
+        "updated": updated,
+        "message": f"{len(items)}개 처리, {updated}개 description 업데이트 완료",
+    }

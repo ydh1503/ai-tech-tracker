@@ -50,9 +50,9 @@ export default function TechGroupCard({ group, featured = false }: TechGroupCard
               </span>
               {isGroup && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 text-xs font-semibold">
-                  <span className="font-mono">{version_prefix}</span>
-                  <span className="opacity-60">·</span>
-                  {patch_count}개 패치
+                  {version_prefix && <span className="font-mono">{version_prefix}</span>}
+                  {version_prefix && <span className="opacity-60">·</span>}
+                  {patch_count}개 버전
                 </span>
               )}
             </div>
@@ -81,7 +81,7 @@ export default function TechGroupCard({ group, featured = false }: TechGroupCard
           {/* 버전 칩 (그룹만 표시) */}
           {isGroup && (
             <div className="mt-2 flex items-center gap-1 flex-wrap">
-              {patches.slice(0, 4).map((p) => (
+              {patches.slice(0, 5).map((p) => (
                 <span
                   key={p.id}
                   className="text-xs font-mono bg-white/70 dark:bg-slate-700/70 text-slate-600 dark:text-slate-300 rounded px-1.5 py-0.5 border border-slate-200 dark:border-slate-600"
@@ -89,9 +89,9 @@ export default function TechGroupCard({ group, featured = false }: TechGroupCard
                   v{p.version_str}
                 </span>
               ))}
-              {patches.length > 4 && (
+              {patches.length > 5 && (
                 <span className="text-xs text-slate-400 dark:text-slate-500 font-medium">
-                  +{patches.length - 4}
+                  +{patches.length - 5}
                 </span>
               )}
             </div>

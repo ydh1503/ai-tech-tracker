@@ -624,6 +624,8 @@ export default function AdminPage() {
   const [crawlResult, setCrawlResult] = useState<string | null>(null);
   const [crawlLogs, setCrawlLogs] = useState<CrawlLogItem[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
+  const [reprocessLoading, setReprocessLoading] = useState(false);
+  const [reprocessResult, setReprocessResult] = useState<string | null>(null);
 
   const loadQueue = useCallback(async (t: string) => {
     if (!t) return;
@@ -659,6 +661,33 @@ export default function AdminPage() {
     setSubmittedToken(t);
     loadQueue(t);
     loadCrawlLogs(t);
+  }
+
+  async function handleReprocessDescriptions() {
+    setReprocessLoading(true);
+    setReprocessResult(null);
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/admin/tech/reprocess-descriptions?limit=50`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${submittedToken}`,
+          },
+        },
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail ?? `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      setReprocessResult(data.message ?? "재처리 완료");
+    } catch (err) {
+      setReprocessResult(err instanceof Error ? err.message : "재처리 실패");
+    } finally {
+      setReprocessLoading(false);
+    }
   }
 
   async function handleTriggerCrawl() {
@@ -819,10 +848,20 @@ export default function AdminPage() {
                 <h2 className="text-base font-semibold text-slate-700 dark:text-slate-300">
                   검토 큐 {queue.length > 0 && `(${queue.length}건)`}
                 </h2>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                   {crawlResult && (
                     <span className="text-xs text-green-600 dark:text-green-400">{crawlResult}</span>
                   )}
+                  {reprocessResult && (
+                    <span className="text-xs text-indigo-600 dark:text-indigo-400">{reprocessResult}</span>
+                  )}
+                  <button
+                    onClick={handleReprocessDescriptions}
+                    disabled={reprocessLoading}
+                    className="rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50"
+                  >
+                    {reprocessLoading ? "생성 중..." : "Description 일괄 생성"}
+                  </button>
                   <button
                     onClick={handleTriggerCrawl}
                     disabled={crawlLoading}

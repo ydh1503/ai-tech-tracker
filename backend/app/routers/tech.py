@@ -48,10 +48,12 @@ def _extract_version(title: str) -> tuple[str, int, int, int] | None:
 
 
 def _group_key(title: str) -> str | None:
+    """패키지(base name) 단위로 그룹키를 반환한다. major.minor를 무시하여
+    동일 패키지의 모든 버전을 하나의 그룹으로 묶는다."""
     info = _extract_version(title)
     if info:
-        base, major, minor, _ = info
-        return f"{base}@{major}.{minor}"
+        base, _, _, _ = info
+        return base  # ALL versions of same package → one group
     return None
 
 
@@ -237,15 +239,16 @@ async def list_grouped_tech_items(
         groups[key].append(item)
 
     # TechGroupedItem 목록 생성
-    def _patch_sort_key(i: TechItem) -> int:
+    def _version_sort_key(i: TechItem) -> tuple[int, int, int]:
+        """full (major, minor, patch) 기준 정렬 — cross-minor 그룹 대응."""
         info = _extract_version(i.title)
-        return info[3] if info else 0
+        return (info[1], info[2], info[3]) if info else (0, 0, 0)
 
     grouped: list[TechGroupedItem] = []
     for key in group_order:
         items_in_group = groups[key]
-        # patch 번호 내림차순 정렬
-        items_in_group.sort(key=_patch_sort_key, reverse=True)
+        # (major, minor, patch) 내림차순 정렬 → 최신 버전이 [0]
+        items_in_group.sort(key=_version_sort_key, reverse=True)
         latest = items_in_group[0]
 
         if key.startswith("__single__"):
@@ -254,7 +257,19 @@ async def list_grouped_tech_items(
         else:
             info = _extract_version(latest.title)
             base_title = info[0] if info else latest.title
-            version_prefix = f"v{info[1]}.{info[2]}" if info else ""
+            # 버전 범위 표시: oldest~newest (cross-minor 그룹이면 range 표시)
+            all_infos = [_extract_version(i.title) for i in items_in_group if _extract_version(i.title)]
+            if len(all_infos) > 1:
+                oldest = min(all_infos, key=lambda x: (x[1], x[2], x[3]))
+                newest = max(all_infos, key=lambda x: (x[1], x[2], x[3]))
+                if (oldest[1], oldest[2]) != (newest[1], newest[2]):
+                    # 다른 minor 버전 포함 → range 표시
+                    version_prefix = f"v{oldest[1]}.{oldest[2]}~v{newest[1]}.{newest[2]}"
+                else:
+                    # 같은 minor, 다른 patch → 기존 방식
+                    version_prefix = f"v{newest[1]}.{newest[2]}"
+            else:
+                version_prefix = f"v{info[1]}.{info[2]}" if info else ""
 
         chips = [
             PatchVersionChip(
@@ -335,14 +350,11 @@ async def get_tech_siblings(
     base, major, minor, _ = info
     # base 내 LIKE 특수문자 이스케이프
     escaped_base = base.replace("%", r"\%").replace("_", r"\_")
-    # _VERSION_RE는 v?로 v 없는 버전도 파싱하므로 패턴도 두 형태 모두 허용
-    from sqlalchemy import or_
+    # 패키지 단위 그룹: base_name으로 시작하는 모든 항목을 조회 후 Python에서 필터
+    # _group_key(s.title) == key 필터로 버전 패턴을 가진 항목만 남김
     all_result = await db.execute(
         select(TechItem).where(
-            or_(
-                TechItem.title.ilike(f"{escaped_base} v{major}.{minor}.%"),
-                TechItem.title.ilike(f"{escaped_base} {major}.{minor}.%"),
-            )
+            TechItem.title.ilike(f"{escaped_base} %")
         )
     )
     siblings = [s for s in all_result.scalars().all() if _group_key(s.title) == key]

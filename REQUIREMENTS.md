@@ -26,6 +26,9 @@
 | 검색 범위 확장 (description + raw_content) + 관련도 정렬 | `routers/tech.py` | 완료 |
 | Atom 1.0 피드 (`/api/feed.xml`, 최근 20개) | `routers/tech.py` | 완료 |
 | 패치 버전 그룹화 엔드포인트 (`/api/tech/grouped`, `/api/tech/{id}/siblings`) | `routers/tech.py` | 완료 |
+| **버전 그룹화 기준 개선** (minor 단위 → 패키지 단위 통합, cross-minor `v0.98~v0.104` 범위 표시) | `routers/tech.py` | **완료** |
+| **description 전용 생성 함수** (`generate_description()`, `_DESC_ONLY_PROMPT`) | `services/ai_processor.py` | **완료** |
+| **Admin description 재처리 개선** (is_relevant 판단 없이 title만으로도 생성 가능) | `routers/admin.py` | **완료** |
 
 ### 프론트엔드 (Next.js 15)
 
@@ -50,8 +53,9 @@
 | **Admin Deprecated 검색 UI** (UUID 직접 입력 → 제목 검색 드롭다운 선택) | `app/admin/page.tsx` | **완료** |
 | **Admin 크롤 로그 탭** (소스별 성공/실패 색상 배지) | `app/admin/page.tsx` | **완료** |
 | 기술 비교 페이지 (`/compare?a=ID&b=ID`) | `app/compare/page.tsx` | 완료 |
-| 패치 버전 그룹화 카드 | `components/TechGroupCard.tsx` | 완료 |
-| 패치 버전 선택 뷰어 | `components/PatchVersionViewer.tsx` | 완료 |
+| 패치 버전 그룹화 카드 (버전 범위 배지, 5개 칩) | `components/TechGroupCard.tsx` | 완료 |
+| 패치 버전 선택 뷰어 (버전 히스토리) | `components/PatchVersionViewer.tsx` | 완료 |
+| **Admin Description 일괄 생성 버튼** (`handleReprocessDescriptions`, 진행 상태 표시) | `app/admin/page.tsx` | **완료** |
 
 ---
 
@@ -353,6 +357,61 @@ UI 구조:
 | Agent-A | FEAT-1: Claude Code 소스 + 카테고리 | `crawler.py`, `models/tech.py`, `ai_processor.py`, `types.ts` |
 | Agent-B | FEAT-2: 카테고리 설명 헤더 | `types.ts`, `app/category/[slug]/page.tsx`, `components/CategoryNav.tsx` |
 | Agent-C | FEAT-3: 페이지네이션 UI | `components/Pagination.tsx` (신규), `app/page.tsx`, `app/category/[slug]/page.tsx`, `app/search/page.tsx` |
+
+---
+
+## 스프린트 6 ✅ 완료 (2026-05-27)
+
+### [UX-1] 버전 그룹화 기준 개선 ✅
+
+**문제**: `anthropics/anthropic-sdk-python v0.98.0`과 `v0.99.0`처럼 minor 버전이 달라도 같은 패키지인데 별도 카드로 표시됨.
+
+**해결**: `_group_key()`를 `base@major.minor` → `base(패키지명)` 단위로 변경해 모든 버전을 1장의 카드로 통합.
+
+**세부 변경 내용**:
+- `_group_key()` — 반환값을 `base` 패키지명으로 단순화 (cross-minor 통합)
+- `_version_sort_key()` — patch만 → `(major, minor, patch)` 전체 튜플 정렬
+- `version_prefix` — 같은 minor면 `v{major}.{minor}`, 다르면 `v{oldest}~v{newest}` 범위 표시
+- `get_tech_siblings()` ILIKE — minor 고정 패턴 → 패키지명 전체 prefix 검색 + Python 필터
+- `TechGroupCard.tsx` — "N개 패치" → "N개 버전", 버전 칩 4개 → 5개, `version_prefix` null-check
+- `PatchVersionViewer.tsx` — 헤더 "패치 버전 히스토리" → "버전 히스토리"
+
+**완료 조건**:
+- [x] `anthropics/anthropic-sdk-python` v0.98~v0.104가 홈 화면에서 1개 카드로 표시
+- [x] `version_prefix` = `"v0.98~v0.104"` 범위 배지 표시
+- [x] 상세 페이지에서 9개 버전 히스토리 선택 가능
+
+**변경 파일**:
+- `backend/app/routers/tech.py` — `_group_key()`, `_version_sort_key()`, `get_tech_grouped()`, `get_tech_siblings()`
+- `frontend/src/components/TechGroupCard.tsx` — 레이블 및 버전 칩 개수 수정
+- `frontend/src/components/PatchVersionViewer.tsx` — 헤더 텍스트 수정
+
+---
+
+### [UX-2] AI Description 전면 누락 수정 ✅
+
+**문제**: DB 299개 항목 중 296개의 `description`이 NULL — 상세 페이지 "상세 설명" 전체 비어 있음.
+
+**근본 원인**: 일부 항목에서 AI가 `is_relevant: false` 판정 → description을 null 반환. 특히 `raw_content`가 짧은 항목.
+
+**해결**:
+1. `ai_processor.py`에 `generate_description()` 함수 추가 — `is_relevant` 판단 없이 description만 생성하는 전용 프롬프트 `_DESC_ONLY_PROMPT` 사용
+2. `admin.py` `reprocess_descriptions` 엔드포인트 개선:
+   - `process_batch()` (is_relevant 포함 전체 처리) → `generate_description()` (description 전용)
+   - `raw_content IS NOT NULL` 조건 제거 — title만으로도 description 생성 가능
+3. Admin 페이지 "Description 일괄 생성" 버튼 추가 (검토 큐 탭 헤더)
+4. 배치 실행으로 299개 전체 description 생성 완료
+
+**완료 조건**:
+- [x] `POST /api/admin/tech/reprocess-descriptions` 엔드포인트가 description 전용 프롬프트 사용
+- [x] Admin 페이지에 "Description 일괄 생성" 버튼 표시
+- [x] DB 299개 항목 모두 `description IS NOT NULL` (null_description = 0)
+- [x] 상세 페이지에서 한국어 description 표시
+
+**변경 파일**:
+- `backend/app/services/ai_processor.py` — `_DESC_ONLY_PROMPT`, `generate_description()` 추가
+- `backend/app/routers/admin.py` — `reprocess_descriptions()` 로직 전면 개선
+- `frontend/src/app/admin/page.tsx` — `handleReprocessDescriptions()` 함수 + 버튼 UI 추가
 
 ---
 
@@ -1179,3 +1238,86 @@ CREATE OR REPLACE TRIGGER tsvector_update BEFORE INSERT OR UPDATE ON tech_items
 - [x] 프론트엔드 빌드 성공 (`npm run build` — 타입 오류·컴파일 오류 0건)
 - [x] 프론트엔드 개발 서버 응답 정상 (HTTP 200)
 - [x] 영어 원문 description DB에서 완전 제거 (0건)
+
+---
+
+## 스프린트 6 🔧 진행 중 (2026-05-27)
+
+> 사용자 피드백 기반 UX 개선 및 데이터 품질 수정.
+
+---
+
+### [UX-1] 버전 그룹화 기준을 패키지 단위로 변경 🔧
+
+**문제**: 현재 그룹화 기준이 `major.minor` 단위여서 `anthropics/anthropic-sdk-python v0.98.0`과 `v0.99.0`이 서로 다른 카드로 표시된다. 같은 패키지의 연속 릴리즈가 화면을 가득 채워 탐색이 어렵다.
+
+**근본 원인**: `_group_key()` 함수가 `f"{base}@{major}.{minor}"`를 키로 반환 → minor 버전이 다르면 별도 그룹.
+
+**영향 범위**: `anthropics/anthropic-sdk-python` v0.98~v0.104 = 9개 별도 카드 → 1개 그룹 카드로 통합.
+
+**변경 사항**:
+
+**파일 1: `backend/app/routers/tech.py`**
+
+```python
+# Before: minor 단위 그룹
+def _group_key(title: str) -> str | None:
+    info = _extract_version(title)
+    if info:
+        base, major, minor, _ = info
+        return f"{base}@{major}.{minor}"
+    return None
+
+# After: 패키지(base name) 단위 그룹
+def _group_key(title: str) -> str | None:
+    info = _extract_version(title)
+    if info:
+        base, _, _, _ = info
+        return base  # ALL 버전을 하나로
+    return None
+```
+
+추가 수정:
+- `_patch_sort_key()`: `info[3]`(patch만) → `(major, minor, patch)` 전체 튜플로 변경 (different minor 정렬 오류 방지)
+- `list_grouped_tech_items()`: `version_prefix` → 버전 범위 표시 (예: `v0.98~v0.104`)
+- `get_tech_siblings()`: ILIKE 패턴을 `f"{base} %"`로 확장 (모든 버전 매칭)
+
+**파일 2: `frontend/src/components/TechGroupCard.tsx`**
+- 버전 배지 레이블: "N개 패치" → "N개 버전" (cross-minor 그룹에 맞게)
+
+**파일 3: `frontend/src/components/PatchVersionViewer.tsx`**
+- 헤더 텍스트: "패치 버전 히스토리" → "버전 히스토리"
+
+**완료 조건**:
+- [ ] `anthropics/anthropic-sdk-python` 관련 카드가 홈에서 1개로 통합됨
+- [ ] 해당 카드의 버전 칩에 v0.98~v0.104 모든 버전이 표시됨
+- [ ] 상세 페이지에서 버전 선택 시 각 버전의 summary/description 표시됨
+
+---
+
+### [UX-2] AI description 일괄 생성 (기존 항목) 🔧
+
+**문제**: DB 299개 항목 중 **296개**의 `description`이 NULL — 상세 페이지의 "상세 설명"란이 비어 있어 사이트 핵심 가치(한국 일반 사용자를 위한 AI 활용 팁)를 전달하지 못하고 있다.
+
+**근본 원인**: 이전에 영어 원문을 NULL로 일괄 초기화했으나, 기존 항목에 대한 AI 재처리 로직이 없었음. 신규 크롤 항목만 AI description이 생성됨.
+
+**변경 사항**:
+
+**파일 1: `backend/app/routers/admin.py`**
+
+신규 엔드포인트 추가:
+```
+POST /api/admin/tech/reprocess-descriptions
+  query: limit (1~200, 기본 50) — 1회 처리 배치 크기
+```
+- `description IS NULL` 항목을 `raw_content`와 함께 AI 배치 처리
+- 결과를 DB에 업데이트 후 처리 건수 반환
+- 비동기 실행 (호출 즉시 202 응답 + 백그라운드 처리)
+
+**파일 2: `frontend/src/app/admin/page.tsx`**
+- "Description 일괄 생성" 버튼 및 진행 상태 표시 추가
+
+**완료 조건**:
+- [ ] `/api/admin/tech/reprocess-descriptions` 호출 시 NULL description 항목에 한국어 설명 생성됨
+- [ ] Admin 페이지에서 처리 버튼 클릭 → 처리 건수 피드백 표시
+- [ ] 상세 페이지에서 description이 있는 항목은 한국어 활용 설명이 표시됨

@@ -176,6 +176,70 @@ async def process_single_item(
         return _FAIL_ITEM
 
 
+_DESC_ONLY_PROMPT = """당신은 AI 기술 정보를 한국 일반 사용자 관점에서 설명하는 전문가입니다.
+
+독자 정의:
+- Claude Code, ChatGPT, Gemini 같은 AI 도구를 일상에서 사용하는 한국의 일반 사용자
+- 개발자가 아닌 사람도 있으므로 쉬운 말로 설명
+
+아래 AI 기술/도구 항목에 대해 한국어 description을 작성하세요.
+
+description 작성 기준:
+- 500자 이내 한국어
+- 독자 관점에서 "이게 나한테 왜 유용한가, 어떻게 쓸 수 있나"를 설명
+- Claude Code, ChatGPT, Gemini 등 실제 AI 도구 사용에 직접 연결되는 활용 팁 포함
+- 기술 용어는 괄호로 쉽게 풀어서 설명 (예: "MCP(AI가 외부 도구를 쓸 수 있게 연결해주는 방법)")
+- 영어 원문 번역이 아닌, 독자를 위한 재해석으로 작성
+
+응답은 반드시 아래 JSON만 반환하고, 다른 텍스트는 포함하지 마세요:
+{"description": "한국어 500자 이내 활용 설명"}"""
+
+
+async def generate_description(
+    title: str,
+    content: str,
+    client: httpx.AsyncClient | None = None,
+    headers: dict[str, str] | None = None,
+) -> str | None:
+    """기존 항목에 대한 description만 생성한다 (is_relevant 판단 없음)."""
+    if headers is None:
+        headers = _build_headers(settings.ANTHROPIC_API_KEY)
+
+    user_message = f"제목: {title}\n\n내용:\n{content[:2000] if content else '(내용 없음, 제목만으로 설명 작성)'}"
+    payload = {
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 512,
+        "system": [
+            {
+                "type": "text",
+                "text": _DESC_ONLY_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        "messages": [{"role": "user", "content": user_message}],
+    }
+
+    try:
+        if client is not None:
+            response = await client.post(_API_URL, headers=headers, json=payload)
+        else:
+            async with httpx.AsyncClient(timeout=600) as _client:
+                response = await _client.post(_API_URL, headers=headers, json=payload)
+
+        response.raise_for_status()
+        data = response.json()
+        result_text = data["content"][0]["text"] if data.get("content") else ""
+        cleaned = result_text.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.split("\n")
+            cleaned = "\n".join(lines[1:-1])
+        parsed = json.loads(cleaned)
+        return parsed.get("description") or None
+    except Exception as e:
+        logger.warning("description 생성 오류 (항목: %s): %s", title, e)
+        return None
+
+
 async def process_batch(
     items: list[dict[str, str]],
 ) -> list[ProcessedItem]:
