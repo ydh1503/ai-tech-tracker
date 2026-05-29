@@ -359,7 +359,9 @@ async def get_tech_siblings(
     )
     siblings = [s for s in all_result.scalars().all() if _group_key(s.title) == key]
     siblings.sort(
-        key=lambda s: (_extract_version(s.title) or (s.title, 0, 0, 0))[3],
+        # (major, minor, patch) 전체 튜플로 비교 — cross-minor 그룹에서
+        # patch만 비교하면 17.0.2 > 18.0.0 처럼 오래된 버전이 앞에 오는 버그 방지
+        key=lambda s: (_extract_version(s.title) or ("", 0, 0, 0))[1:4],
         reverse=True,
     )
 
