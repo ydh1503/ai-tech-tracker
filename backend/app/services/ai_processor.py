@@ -100,15 +100,40 @@ def _build_headers(key: str) -> dict[str, str]:
     return headers
 
 
+def _strip_code_fence(text: str) -> str:
+    """마크다운 코드펜스(```)로 감싼 응답에서 펜스를 제거한다."""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.split("\n")
+        cleaned = "\n".join(lines[1:-1])
+    return cleaned
+
+
+async def _post_claude(
+    payload: dict,
+    client: httpx.AsyncClient | None,
+    headers: dict[str, str],
+) -> str:
+    """Claude messages API를 호출하고 첫 번째 content 텍스트를 반환한다.
+
+    client가 주어지면 재사용하고, 없으면 일회성 AsyncClient를 생성한다.
+    HTTP 오류는 호출부에서 처리하도록 그대로 전파한다.
+    """
+    if client is not None:
+        response = await client.post(_API_URL, headers=headers, json=payload)
+    else:
+        async with httpx.AsyncClient(timeout=600) as _client:
+            response = await _client.post(_API_URL, headers=headers, json=payload)
+
+    response.raise_for_status()
+    data = response.json()
+    return data["content"][0]["text"] if data.get("content") else ""
+
+
 def _parse_response(content: str) -> ProcessedItem:
     """Claude 응답 JSON을 파싱한다. 파싱 실패 시 is_relevant=False를 반환한다."""
     try:
-        cleaned = content.strip()
-        if cleaned.startswith("```"):
-            lines = cleaned.split("\n")
-            cleaned = "\n".join(lines[1:-1])
-
-        data = json.loads(cleaned)
+        data = json.loads(_strip_code_fence(content))
         return ProcessedItem(
             is_relevant=bool(data.get("is_relevant", False)),
             category=data.get("category"),
@@ -157,15 +182,7 @@ async def process_single_item(
     }
 
     try:
-        if client is not None:
-            response = await client.post(_API_URL, headers=headers, json=payload)
-        else:
-            async with httpx.AsyncClient(timeout=600) as _client:
-                response = await _client.post(_API_URL, headers=headers, json=payload)
-
-        response.raise_for_status()
-        data = response.json()
-        result_text = data["content"][0]["text"] if data.get("content") else ""
+        result_text = await _post_claude(payload, client, headers)
         return _parse_response(result_text)
 
     except httpx.HTTPStatusError as e:
@@ -220,20 +237,8 @@ async def generate_description(
     }
 
     try:
-        if client is not None:
-            response = await client.post(_API_URL, headers=headers, json=payload)
-        else:
-            async with httpx.AsyncClient(timeout=600) as _client:
-                response = await _client.post(_API_URL, headers=headers, json=payload)
-
-        response.raise_for_status()
-        data = response.json()
-        result_text = data["content"][0]["text"] if data.get("content") else ""
-        cleaned = result_text.strip()
-        if cleaned.startswith("```"):
-            lines = cleaned.split("\n")
-            cleaned = "\n".join(lines[1:-1])
-        parsed = json.loads(cleaned)
+        result_text = await _post_claude(payload, client, headers)
+        parsed = json.loads(_strip_code_fence(result_text))
         return parsed.get("description") or None
     except Exception as e:
         logger.warning("description 생성 오류 (항목: %s): %s", title, e)
