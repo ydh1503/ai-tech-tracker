@@ -351,10 +351,11 @@ async def get_tech_siblings(
     # base 내 LIKE 특수문자 이스케이프
     escaped_base = base.replace("%", r"\%").replace("_", r"\_")
     # 패키지 단위 그룹: base_name으로 시작하는 모든 항목을 조회 후 Python에서 필터
-    # _group_key(s.title) == key 필터로 버전 패턴을 가진 항목만 남김
+    # 공백 없이 "{base}%" 패턴을 사용하여 "base@ver", "base-extra" 등
+    # 모든 파생 타이틀을 포함한다. 정확한 그룹 매칭은 아래 Python 필터로 보장.
     all_result = await db.execute(
         select(TechItem).where(
-            TechItem.title.ilike(f"{escaped_base} %")
+            TechItem.title.ilike(f"{escaped_base}%")
         )
     )
     siblings = [s for s in all_result.scalars().all() if _group_key(s.title) == key]
