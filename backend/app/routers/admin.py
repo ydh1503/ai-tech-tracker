@@ -1,9 +1,13 @@
 """관리자 API 라우터 (Bearer 토큰 인증)."""
 from __future__ import annotations
 
+import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, status
 from sqlalchemy import select
@@ -379,7 +383,6 @@ async def reprocess_descriptions(
     is_relevant 판단 없이 description만 전용으로 생성하는 프롬프트를 사용한다.
     raw_content가 없는 항목은 title만으로 description을 생성한다.
     """
-    import asyncio
     import httpx
     from app.services.ai_processor import generate_description, _build_headers
     from app.config import settings
@@ -403,6 +406,8 @@ async def reprocess_descriptions(
     async with httpx.AsyncClient(timeout=600) as client:
         for batch_start in range(0, len(items), 10):
             batch = items[batch_start:batch_start + 10]
+            # return_exceptions=True: 개별 호출 실패 시 예외를 값으로 반환해
+            # 나머지 항목 처리가 중단되지 않도록 한다.
             results = await asyncio.gather(
                 *[
                     generate_description(
@@ -412,11 +417,17 @@ async def reprocess_descriptions(
                         headers=headers,
                     )
                     for item in batch
-                ]
+                ],
+                return_exceptions=True,
             )
-            for item, desc in zip(batch, results):
-                if desc:
-                    item.description = desc
+            for item, result in zip(batch, results):
+                if isinstance(result, Exception):
+                    logger.warning(
+                        "description 생성 실패 (항목: %s): %s", item.title, result
+                    )
+                    continue
+                if result:
+                    item.description = result
                     updated += 1
 
     await db.flush()
